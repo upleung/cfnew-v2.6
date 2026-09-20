@@ -21,7 +21,7 @@ let et = false;
 let ex = false;  
 let tp = '';  
 
-// [已优化] 使用您自建的专属订阅转换地址
+// [专属替换] 您私有的转换接口
 let scu = 'https://sublink.iwrt.pp.ua';  
 const remoteConfigUrl = 'https://raw.githubusercontent.com/byJoey/test/refs/heads/main/tist.ini';
 
@@ -32,7 +32,6 @@ let egi = true;
 let kvStore = null;
 let kvConfig = {};
 
-// [已优化] 自定义落地地区扩容
 const regionMapping = {
     'US': ['🇺🇸 美国', 'US', 'United States'],
     'SG': ['🇸🇬 新加坡', 'SG', 'Singapore'],
@@ -67,7 +66,6 @@ let backupIPs = [
     { domain: 'ProxyIP.GB.CMLiussss.net', region: 'GB', regionCode: 'GB', port: 443 }
 ];
 
-// [已优化] 反代加速域名提速
 const directDomains = [
     { name: "Visa(直连)", domain: "visa.com" },
     { name: "iCook(极快)", domain: "icook.tw" }, 
@@ -76,7 +74,9 @@ const directDomains = [
     { name: "CF-Node1", domain: "cloudflare.182682.xyz" },
     { name: "Speed-Marisa", domain: "speed.marisalnc.com" },
     { domain: "bestcf.top" },
-    { domain: "cf.090227.xyz" }
+    { domain: "cf.090227.xyz" },
+    { domain: "cloudflare.9jy.cc" },
+    { domain: "8.889288.xyz" }
 ];
 
 const E_INVALID_DATA = atob('aW52YWxpZCBkYXRh');
@@ -100,7 +100,6 @@ const ADDRESS_TYPE_IPV4 = 1;
 const ADDRESS_TYPE_URL = 2;
 const ADDRESS_TYPE_IPV6 = 3;
 
-// [防 CF 拦截混淆点] 动态解析正则
 function isValidFormat(str) {
     const userRegex = new RegExp(atob('XlswLTlhLWZdezh9LVswLTlhLWZdezR9LVswLTlhLWZdezR9LVswLTlhLWZdezR9LVswLTlhLWZdezEyfSQ='), 'i');
     return userRegex.test(str);
@@ -159,6 +158,16 @@ async function detectWorkerRegion(request) {
         }
         return 'SG';
     } catch (error) { return 'SG'; }
+}
+
+async function checkIPAvailability(domain, port = 443, timeout = 2000) {
+    try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeout);
+        const response = await fetch(`https://${domain}`, { method: 'HEAD', signal: controller.signal, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        clearTimeout(timeoutId);
+        return response.status < 500;
+    } catch (error) { return true; }
 }
 
 async function getBestBackupIP(workerRegion = '') {
@@ -311,6 +320,11 @@ export default {
             piu = getConfigValue('yxURL', env.yxURL || env.YXURL) || 'https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt';
             cp = getConfigValue('d', env.d || env.D) || '';
             
+            const defaultURL = 'https://raw.githubusercontent.com/qwer-search/bestip/refs/heads/main/kejilandbestip.txt';
+            if (piu !== defaultURL) {
+                directDomains.length = 0; customPreferredIPs = []; customPreferredDomains = [];
+            }
+
             const url = new URL(request.url);
 
             if (url.pathname.includes('/api/config') || url.pathname.includes('/api/preferred-ips')) {
@@ -325,9 +339,7 @@ export default {
                     } else {
                         isValid = (isValidFormat(pathIdentifier) && pathIdentifier === at);
                     }
-                    if (isValid) {
-                        return url.pathname.includes('/config') ? await handleConfigAPI(request) : await handlePreferredIPsAPI(request);
-                    }
+                    if (isValid) return url.pathname.includes('/config') ? await handleConfigAPI(request) : await handlePreferredIPsAPI(request);
                 }
                 return new Response(JSON.stringify({ error: '路径验证失败' }), { status: 403, headers: { 'Content-Type': 'application/json' }});
             }
@@ -368,7 +380,7 @@ export default {
                     const t = {
                         title: isFarsi ? 'ترمینال' : '云网关验证系统',
                         terminal: isFarsi ? 'ترمینال' : '云端管理节点',
-                        congratulations: isFarsi ? 'تبریک می‌گوییم' : '欢迎使用云端接入验证',
+                        congratulations: isFarsi ? 'تبریک می‌گوییم' : '欢迎使用云端安全接入系统',
                         enterU: isFarsi ? 'متغیر U را وارد کنید' : '请在下方输入您的授权 UUID',
                         enterD: isFarsi ? 'متغیر D را وارد کنید' : '请在下方输入您的安全 PATH',
                         inputU: isFarsi ? 'وارد کنید...' : 'Enter UUID...',
@@ -377,7 +389,7 @@ export default {
                         reenter: isFarsi ? 'دوباره وارد کنید' : '请重新检查并输入'
                     };
                     
-                    // 毛玻璃前端面板集成
+                    // [修复] 修复了壁纸 API 加载失败的问题
                     const terminalHtml = `<!DOCTYPE html>
                     <html lang="${langAttr}" dir="${isFarsi ? 'rtl' : 'ltr'}">
                     <head>
@@ -385,7 +397,7 @@ export default {
                         <meta name="viewport" content="width=device-width, initial-scale=1.0">
                         <title>${t.title} | HomeLab Edge</title>
                         <style>
-                            body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-image: url('https://bing.img.run/1920x1080.php'); background-size: cover; background-attachment: fixed; background-position: center; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #fff; }
+                            body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-image: url('https://api.dujin.org/bing/1920.php'); background-color: #2c3e50; background-size: cover; background-attachment: fixed; background-position: center; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #fff; }
                             .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35); z-index: -1; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
                             .terminal { background: rgba(255,255,255,0.15); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); border: 1px solid rgba(255,255,255,0.2); border-radius: 20px; padding: 40px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); width: 90%; max-width: 550px; text-align: center; transition: 0.3s; }
                             .terminal:hover { box-shadow: 0 15px 50px rgba(0,0,0,0.3); background: rgba(255,255,255,0.2); }
@@ -645,8 +657,8 @@ async function handleSubscriptionPage(request, user = null) {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${t.title} | HomeLab Edge</title>
         <style>
-            body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-image: url('https://bing.img.run/1920x1080.php'); background-size: cover; background-attachment: fixed; background-position: center; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;}
-            .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35); z-index: -1; backdrop-filter: blur(8px); }
+            body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-image: url('https://api.dujin.org/bing/1920.php'); background-color: #2c3e50; background-size: cover; background-attachment: fixed; background-position: center; color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;}
+            .overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.35); z-index: -1; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
             .container { max-width: 900px; width: 100%; margin: 0 auto; z-index: 1; }
             .header { text-align: center; margin-bottom: 30px; }
             .title { font-size: 2.8rem; font-weight: bold; text-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 10px; }
@@ -655,6 +667,7 @@ async function handleSubscriptionPage(request, user = null) {
             .card:hover { background: rgba(255,255,255,0.15); box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
             .card-title { font-size: 1.5rem; margin-top:0; margin-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 10px; font-weight: 500; }
             .client-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; margin: 20px 0; }
+            button.client-btn { font-family: inherit; font-size: 1em; }
             .client-btn { background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); padding: 12px 15px; color: #fff; border-radius: 10px; cursor: pointer; transition: all 0.3s; text-align: center; font-weight: 500; text-decoration: none; display: block; }
             .client-btn:hover { background: rgba(255,255,255,0.3); transform: translateY(-3px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }
             .form-group { margin-bottom: 15px; }
@@ -663,6 +676,7 @@ async function handleSubscriptionPage(request, user = null) {
             input:focus, select:focus { background: rgba(0,0,0,0.5); border-color: #fff; }
             .submit-btn { background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.5); color: #fff; padding: 12px 25px; border-radius: 8px; cursor: pointer; transition: 0.3s; font-size: 1rem; font-weight: bold; width: 100%; }
             .submit-btn:hover { background: rgba(255,255,255,0.4); }
+            .subscription-url { background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.3); padding: 15px; word-break: break-all; font-family: monospace; color: #fff; margin-top: 20px; display: none; border-radius: 10px; box-shadow: inset 0 0 10px rgba(0,0,0,0.2); transition: all 0.3s ease; }
         </style>
     </head>
     <body>
@@ -676,11 +690,14 @@ async function handleSubscriptionPage(request, user = null) {
             <div class="card">
                 <h2 class="card-title">${t.selectClient}</h2>
                 <div class="client-grid">
-                    <a href="#" class="client-btn" onclick="alert('订阅已复制')">CLASH</a>
-                    <a href="#" class="client-btn" onclick="alert('订阅已复制')">V2RAY</a>
-                    <a href="#" class="client-btn" onclick="alert('订阅已复制')">SING-BOX</a>
-                    <a href="#" class="client-btn" onclick="alert('订阅已复制')">QUANTUMULT X</a>
+                    <button class="client-btn" onclick="generateClientLink('clash', 'CLASH')">CLASH</button>
+                    <button class="client-btn" onclick="generateClientLink('v2ray', 'V2RAY')">V2RAY</button>
+                    <button class="client-btn" onclick="generateClientLink('singbox', 'SING-BOX')">SING-BOX</button>
+                    <button class="client-btn" onclick="generateClientLink('quanx', 'QUANTUMULT X')">QUANTUMULT X</button>
+                    <button class="client-btn" onclick="generateClientLink('surge', 'SURGE')">SURGE</button>
+                    <button class="client-btn" onclick="generateClientLink('v2ray', 'Shadowrocket')">Shadowrocket</button>
                 </div>
+                <div class="subscription-url" id="clientSubscriptionUrl"></div>
             </div>
             
             <div class="card">
@@ -722,6 +739,107 @@ async function handleSubscriptionPage(request, user = null) {
             </div>
 
         </div>
+
+        <script>
+            // [恢复完整的应用唤醒与复制逻辑]
+            var SUB_CONVERTER_URL = "${scu}";
+            var REMOTE_CONFIG_URL = "https://raw.githubusercontent.com/byJoey/test/refs/heads/main/tist.ini";
+
+            function tryOpenApp(schemeUrl, fallbackCallback, timeout) {
+                timeout = timeout || 2500;
+                var appOpened = false;
+                var callbackExecuted = false;
+                var startTime = Date.now();
+                var blurHandler = function() {
+                    var elapsed = Date.now() - startTime;
+                    if(elapsed < 3000 && !callbackExecuted) { appOpened = true; }
+                };
+                window.addEventListener('blur', blurHandler);
+                var hiddenHandler = function() {
+                    var elapsed = Date.now() - startTime;
+                    if(elapsed < 3000 && !callbackExecuted) { appOpened = true; }
+                };
+                document.addEventListener('visibilitychange', hiddenHandler);
+                var iframe = document.createElement('iframe');
+                iframe.style.display = 'none';
+                iframe.style.width = '1px';
+                iframe.style.height = '1px';
+                iframe.src = schemeUrl;
+                document.body.appendChild(iframe);
+                setTimeout(function() {
+                    if(iframe.parentNode) iframe.parentNode.removeChild(iframe);
+                    window.removeEventListener('blur', blurHandler);
+                    document.removeEventListener('visibilitychange', hiddenHandler);
+                    if(!callbackExecuted) {
+                        callbackExecuted = true;
+                        if(!appOpened && fallbackCallback) fallbackCallback();
+                    }
+                }, timeout);
+            }
+
+            function generateClientLink(clientType, clientName) {
+                var currentUrl = window.location.href.replace(/\\/$/, "");
+                var subscriptionUrl = currentUrl + "/sub";
+                var schemeUrl = '';
+                var displayName = clientName || '';
+                var finalUrl = subscriptionUrl;
+
+                if (clientType === 'v2ray') {
+                    finalUrl = subscriptionUrl;
+                    if (clientName === 'Shadowrocket') {
+                        schemeUrl = 'shadowrocket://add/' + encodeURIComponent(finalUrl);
+                    } else if (clientName === 'V2RAYNG') {
+                        schemeUrl = 'v2rayng://install?url=' + encodeURIComponent(finalUrl);
+                    } else if (clientName === 'NEKORAY') {
+                        schemeUrl = 'nekoray://install-config?url=' + encodeURIComponent(finalUrl);
+                    }
+                } else {
+                    var encodedUrl = encodeURIComponent(subscriptionUrl);
+                    finalUrl = SUB_CONVERTER_URL + "?target=" + clientType + "&url=" + encodedUrl + "&insert=false&config=" + encodeURIComponent(REMOTE_CONFIG_URL) + "&emoji=true&list=false&xudp=false&udp=false&tfo=false&expand=true&scv=false&fdn=false&new_name=true";
+
+                    if (clientType === 'clash') {
+                        if (clientName === 'STASH') {
+                            schemeUrl = 'stash://install?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'STASH';
+                        } else {
+                            schemeUrl = 'clash://install-config?url=' + encodeURIComponent(finalUrl);
+                            displayName = 'CLASH';
+                        }
+                    } else if (clientType === 'surge') {
+                        schemeUrl = 'surge:///install-config?url=' + encodeURIComponent(finalUrl);
+                        displayName = 'SURGE';
+                    } else if (clientType === 'singbox') {
+                        schemeUrl = 'sing-box://install-config?url=' + encodeURIComponent(finalUrl);
+                        displayName = 'SING-BOX';
+                    } else if (clientType === 'loon') {
+                        schemeUrl = 'loon://install?url=' + encodeURIComponent(finalUrl);
+                        displayName = 'LOON';
+                    } else if (clientType === 'quanx') {
+                        schemeUrl = 'quantumult-x://install-config?url=' + encodeURIComponent(finalUrl);
+                        displayName = 'QUANTUMULT X';
+                    }
+                }
+
+                // 恢复底部 URL 展示框
+                var urlElement = document.getElementById("clientSubscriptionUrl");
+                urlElement.textContent = finalUrl;
+                urlElement.style.display = "block";
+
+                var copyAction = function() {
+                    navigator.clipboard.writeText(finalUrl).then(function() {
+                        alert(displayName + " 订阅链接已复制到剪贴板！");
+                    }).catch(function(err) {
+                        alert("复制失败，请手动在下方框内长按复制。");
+                    });
+                };
+
+                if (schemeUrl) {
+                    tryOpenApp(schemeUrl, copyAction);
+                } else {
+                    copyAction();
+                }
+            }
+        </script>
     </body>
     </html>`;
     
