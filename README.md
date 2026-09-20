@@ -41,7 +41,7 @@
 | 类型 | 描述 | 链接 |
 | :--- | :--- | :--- |
 |  **优选工具** | 根据自己的网络环境选择最适合的IP | https://github.com/byJoey/yx-tools/releases |
-|  **文字教程** | 详细的部署与使用说明博客文章 | [https://joeyblog.net/yuanchuang/1146.html](https://joeyblog.net/yuanchuang/1146.html) |
+|  **文字教程** | 详细的部署与使用说明文档 | https://github.com/upleung/cfnew-v2.6/blob/main/%E9%83%A8%E7%BD%B2.md |
 
 ### 部署与使用
 
