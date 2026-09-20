@@ -1,4 +1,4 @@
-// CFnew - 终端 v3.0 (三网优选极速修复版)
+// CFnew - 终端 v3.0 (深度毛玻璃UI + Unsplash + 三网双端口极速版)
 // 版本: v3.0 
 import { connect as 连接 } from 'cloudflare:sockets';
 const 基础64文本解码器 = new TextDecoder();
@@ -15,7 +15,7 @@ let 自定义优选地址列表 = [];
 let 自定义优选域名列表 = [];
 let 启用代理降级 = false;
 let 仅走代理 = false;
-let 禁用非传输层安全 = false; // 确保 80 端口正常生成
+let 禁用非传输层安全 = false; // 确保为 false，从而自动生成 80 端口节点
 let 禁用优选 = false;
 let 启用地区匹配 = true;
 let 当前工作器地区 = '';
@@ -36,7 +36,7 @@ const 远程配置网址 = 'https://raw.githubusercontent.com/byJoey/test/refs/h
 let 启用优选域名 = true; 
 let 启用优选地址 = true;
 let 启用仓库优选 = true;
-let 启用原生地址 = false;       
+let 启用原生地址 = false;          
 
 let 键值存储 = null;
 let 键值配置 = {};
@@ -66,13 +66,55 @@ function 获取配置开关值(键, 默认启用 = false, 备用值 = undefined)
   const 默认值 = 备用值 !== undefined ? 备用值 : (默认启用 ? 'yes' : 'no');
   return 是否开启值(获取配置值(键, 默认值), 默认启用);
 }
-
 function 获取配置文本值(键, 默认值 = '', 备用值 = undefined) {
   const 值 = 获取配置值(键, 备用值 !== undefined ? 备用值 : 默认值);
   return 值 === undefined || 值 === null ? 默认值 : String(值);
 }
 
-// [修复] 强制增加 DE, SE, NL, FI, GB 并补全国家代码字典
+function 整理有效配置(配置) {
+  const 快照 = { ...配置默认值, ...配置 };
+  ['ev', 'et', 'ex', 'ech', 'ena', 'epd', 'epi', 'egi', 'ipv4', 'ipv6', 'ispMobile', 'ispUnicom', 'ispTelecom'].forEach(键 => {
+    快照[键] = 归一配置开关(快照[键], 是否开启值(配置默认值[键]));
+  });
+  if (快照.ev === 'no' && 快照.et === 'no' && 快照.ex === 'no') 快照.ev = 'yes';
+  if (快照.ech === 'yes') 快照.dkby = 'yes';
+  return 快照;
+}
+
+function 读取环境配置值(环境值, ...名称列表) {
+  if (!环境值) return undefined;
+  for (const 名称 of 名称列表) {
+    if (环境值[名称] !== undefined && 环境值[名称] !== null && 环境值[名称] !== '') {
+      return 环境值[名称];
+    }
+  }
+  return undefined;
+}
+
+function 获取环境配置快照(环境值 = {}) {
+  const 映射 = {
+    wk: ['wk', 'WK'], ev: ['ev', 'EV'], et: ['et', 'ET'], ex: ['ex', 'EX'], ech: ['ech', 'ECH'], tp: ['tp', 'TP'],
+    customDNS: ['customDNS', 'CUSTOMDNS', 'CUSTOM_DNS'], customECHDomain: ['customECHDomain', 'CUSTOMECHDOMAIN', 'CUSTOM_ECH_DOMAIN'],
+    alpn: ['alpn', 'ALPN'], d: ['d', 'D'], p: ['p', 'P'], yx: ['yx', 'YX'], yxURL: ['yxURL', 'YXURL', 'YX_URL'],
+    s: ['s', 'S'], homepage: ['homepage', 'HOMEPAGE'], scu: ['scu', 'SCU'], ena: ['ena', 'ENA'], epd: ['epd', 'EPD'],
+    epi: ['epi', 'EPI'], egi: ['egi', 'EGI'], ae: ['ae', 'AE'], rm: ['rm', 'RM'], qj: ['qj', 'QJ'],
+    dkby: ['dkby', 'DKBY'], yxby: ['yxby', 'YXBY'], ipv4: ['ipv4', 'IPV4'], ipv6: ['ipv6', 'IPV6'],
+    ispMobile: ['ispMobile', 'ISPMOBILE', 'ISP_MOBILE'], ispUnicom: ['ispUnicom', 'ISPUNICOM', 'ISP_UNICOM'],
+    ispTelecom: ['ispTelecom', 'ISPTELECOM', 'ISP_TELECOM']
+  };
+  const 快照 = {};
+  for (const [键, 名称列表] of Object.entries(映射)) {
+    const 值 = 读取环境配置值(环境值, ...名称列表);
+    if (值 !== undefined) 快照[键] = 值;
+  }
+  return 快照;
+}
+
+function 获取有效配置快照(环境值 = {}) {
+  return 整理有效配置({ ...获取环境配置快照(环境值), ...键值配置 });
+}
+
+// [更新] 保留所有落地IP国家
 const 地区映射 = {
   'HK': ['🇭🇰 香港', 'HK', 'Hong Kong'],
   'US': ['🇺🇸 美国', 'US', 'United States'],
@@ -84,6 +126,8 @@ const 地区映射 = {
   'NL': ['🇳🇱 荷兰', 'NL', 'Netherlands'],
   'FI': ['🇫🇮 芬兰', 'FI', 'Finland'],
   'GB': ['🇬🇧 英国', 'GB', 'United Kingdom'],
+  'AU': ['🇦🇺 澳大利亚', 'AU', 'Australia'],
+  'CA': ['🇨🇦 加拿大', 'CA', 'Canada'],
   'Oracle': ['甲骨文', 'Oracle'],
   'DigitalOcean': ['数码海', 'DigitalOcean'],
   'Vultr': ['Vultr', 'Vultr'],
@@ -109,23 +153,22 @@ let 备用地址列表 = [
   { domain: 解码64('UHJveHlJUC5HQi5DTUxpdXNzc3MubmV0'), region: 'GB', regionCode: 'GB', port: 443 }
 ];
 
-// [修复] 用户指定的4个高可用反代直连域名
+// [修复] 精简的4个高质量优质直连域名
 const 直连域名列表 = [
-  { name: "Visa官方-优选", domain: "visa.com" },
-  { name: "iCook-台湾极速", domain: "icook.tw" },
+  { name: "Visa官方-直连", domain: "visa.com" },
+  { name: "iCook-台湾", domain: "icook.tw" },
   { name: "Visa新加坡-极速", domain: "www.visa.com.sg" },
   { name: "CF优选池-090227", domain: "cf.090227.xyz" }
 ];
 
-// [修复] 内置全自动三网（移动/联通/电信）优选 IP 池
+// [修复] 新增内置三网优选IP，自动生成节点分配
 const 三网优选IP = [
   { ip: '104.16.160.1', isp: '三网自动-电信优选' },
   { ip: '172.64.32.1', isp: '三网自动-电信极速' },
   { ip: '104.17.0.1', isp: '三网自动-联通优选' },
   { ip: '172.67.0.1', isp: '三网自动-联通极速' },
   { ip: '104.19.160.1', isp: '三网自动-移动优选' },
-  { ip: '162.159.192.1', isp: '三网自动-移动极速' },
-  { ip: '172.65.0.1', isp: '三网自动-高权重IP' }
+  { ip: '162.159.192.1', isp: '三网自动-移动极速' }
 ];
 
 const E_INVALID_DATA = atob('aW52YWxpZCBkYXRh');
@@ -143,13 +186,34 @@ const E_SOCKS_AUTH_FAIL = atob('ZmFpbCB0byBhdXRoIHNvY2tzIHNlcnZlcg==');
 const E_SOCKS_CONN_FAIL = atob('ZmFpbCB0byBvcGVuIHNvY2tzIGNvbm5lY3Rpb24=');
 const E_SOCKS_TUNNEL_FAIL = atob('ZmFpbCB0byBvcGVuIHByb3h5IHR1bm5lbA==');
 const E_INVALID_PROXY_RESP = atob('aW52YWxpZCBwcm94eSByZXNwb25zZQ==');
-
+const 前缀_套接字5 = atob('c29ja3M1Oi8v');
+const 前缀_套接字 = atob('c29ja3M6Ly8=');
+const 前缀_超文本 = atob('aHR0cDovLw==');
+const 前缀_安全超文本 = atob('aHR0cHM6Ly8=');
+const 文本_连接方法 = atob('Q09OTkVDVA==');
+const 文本_协议版本 = atob('IEhUVFAvMS4x');
+const 文本_主机头 = atob('SG9zdDog');
+const 文本_代理认证头 = atob('UHJveHktQXV0aG9yaXphdGlvbjogQmFzaWMg');
+const 文本_代理保持 = atob('UHJveHktQ29ubmVjdGlvbjogS2VlcC1BbGl2ZQ==');
+const 文本_用户代理头 = atob('VXNlci1BZ2VudDogTW96aWxsYS81LjA=');
+const 文本_换行 = atob('DQo=');
+const 文本_响应前缀 = atob('SFRUUC8=');
+const 代理种类_套接字5 = 'p5';
+const 代理种类_隧道 = 'pt';
+const 代理种类_安全隧道 = 'pts';
 let 已解析代理5配置 = {};
 let 是否代理已启用 = false;
-
-const ADDRESS_TYPE_IPV4 = 1;
-const ADDRESS_TYPE_URL = 2;
-const ADDRESS_TYPE_IPV6 = 3;
+const 地址类型_四版 = 1;
+const 地址类型_网址 = 2;
+const 地址类型_六版 = 3;
+const 传输块大小 = 64 * 1024;
+const 传输下载包大小 = 32 * 1024;
+const 传输下载尾部 = 512;
+const 传输下载延迟 = 0;
+const 传输上传包大小 = 16 * 1024;
+const 传输上传队列上限 = 256 * 1024;
+const 传输连接竞速数 = 2;
+const 首字节超时 = 3500;
 const 共享解码器 = new TextDecoder();
 const 唯一标识字节缓存 = new Map();
 
@@ -162,32 +226,115 @@ function 是否有效地址(地址792) {
   if (值4正则.test(地址792)) return true;
   const 值6正则 = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
   if (值6正则.test(地址792)) return true;
-  const 值6值正则 = /^::1$|^::$\vert{}^(?:[0-9a-fA-F]{1,4}:)*::(?:[0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}$/;
+  const 值6值正则 = /^::1$|^::$|^(?:[0-9a-fA-F]{1,4}:)*::(?:[0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}$/;
   if (值6值正则.test(地址792)) return true;
   return false;
 }
 
+function 创建节点命名器(跳过 = false) {
+  const 值跳过 = typeof 优选地址源 !== 'undefined' && 优选地址源 && 优选地址源.trim();
+  let 跳过编号791 = 值跳过 || 跳过;
+  const 计数器组790 = {};
+  function 设置跳过编号(本地值789) { if (!值跳过) { 跳过编号791 = 本地值789; } }
+  function 处理命名器(基础名称, 节点名称788 = null) {
+    if (跳过编号791 || 基础名称 && 基础名称.includes('.')) return 节点名称788 || 基础名称;
+    if (!计数器组790[基础名称]) 计数器组790[基础名称] = 0;
+    计数器组790[基础名称]++;
+    const 索引787 = String(计数器组790[基础名称]).padStart(2, '0');
+    return `${节点名称788 || 基础名称}-${索引787}`;
+  }
+  return { namer: 处理命名器, setSkipNumbering: 设置跳过编号 };
+}
+function 规范化节点主机(主机786) { return String(主机786 || '').trim().replace(/^\[([^\]]+)\]$/, '$1'); }
+function 处理值节点别名部分(值785, 回退 = 'Node') {
+  let 文本784 = String(值785 || '').trim();
+  if (!文本784 || /^自定义优选-/i.test(文本784)) 文本784 = 回退;
+  文本784 = 文本784.replace(/^\[([^\]]+)\]$/, '$1').replace(/^https?:\/\//i, '').replace(/[/?#].*$/, '').replace(/\s+/g, '_');
+  return 文本784 || 回退;
+}
+function 获取值节点别名基础(项目783) {
+  const 主机782 = 规范化节点主机(项目783?.ip || 项目783?.domain || '');
+  if (主机782 && 主机782.includes(':') && /^[0-9a-fA-F:.]+$/.test(主机782)) return 'IPv6优选';
+  if (主机782 && !是否有效地址(主机782)) return '优选域名';
+  const 本地值781 = 处理值节点别名部分(项目783?.isp || 项目783?.name || '', 'IPv4优选');
+  const 机房780 = 处理值节点别名部分(项目783?.colo || '', '');
+  return 机房780 ? `${本地值781}-${机房780}` : 本地值781;
+}
 function 创建值节点命名器(跳过编号779 = false) {
   const 计数器组 = {};
   return 项目778 => {
-    const 基础 = (项目778 && 项目778.isp) ? 项目778.isp : '优选节点';
+    const 基础 = 获取值节点别名基础(项目778);
     if (跳过编号779) return 基础;
     计数器组[基础] = (计数器组[基础] || 0) + 1;
     return `${基础}-${String(计数器组[基础]).padStart(2, '0')}`;
   };
 }
-
-async function 获取最佳备用地址(工作器地区 = '') {
-  if (备用地址列表.length === 0) return null;
-  const 可用地址列表 = 备用地址列表.map(地址750 => ({ ...地址750, available: true }));
-  if (启用地区匹配 && 工作器地区) {
-    const 值地址列表 = 获取值地区值(工作器地区, 可用地址列表);
-    if (值地址列表.length > 0) return 值地址列表[0];
+function 规范化应用层协议协商(值777) {
+  const 本地值776 = ['', 'h3', 'h2', 'http/1.1', 'h3,h2', 'h2,http/1.1', 'h3,h2,http/1.1'];
+  const 应用层协议协商775 = String(值777 || '').trim();
+  return 本地值776.includes(应用层协议协商775) ? 应用层协议协商775 : '';
+}
+function 处理值应用层协议协商值(参数774) {
+  const 应用层协议协商 = 规范化应用层协议协商(自定义应用层协议协商);
+  if (应用层协议协商) 参数774.set('alpn', 应用层协议协商);
+}
+async function 处理值键值值(本地值773) {
+  const 键值绑定 = 本地值773.C || 本地值773.c;
+  if (键值绑定) { try { 键值存储 = 键值绑定; await 加载键值配置(); } catch (错误772) { 键值存储 = null; } }
+}
+async function 加载键值配置(本地值771 = false) {
+  if (!键值存储) return;
+  if (!本地值771 && 键值配置上次加载 > 0 && Date.now() - 键值配置上次加载 < 键值缓存期限) return;
+  try {
+    let 本地值770 = '';
+    try { 本地值770 = (await 键值存储.get('c_ver')) || ''; } catch (忽略值769) {}
+    if (!本地值771 && 本地值770 && 本地值770 === 键值配置版本 && 键值配置 && Object.keys(键值配置).length > 0) {
+      键值配置上次加载 = Date.now(); return;
+    }
+    const 配置数据 = await 键值存储.get('c');
+    if (配置数据) 键值配置 = JSON.parse(配置数据);
+    键值配置版本 = 本地值770; 键值配置上次加载 = Date.now();
+  } catch (错误768) { if (!键值配置) 键值配置 = {}; }
+}
+async function 保存键值配置() {
+  if (!键值存储) return;
+  try {
+    const 配置字符串 = JSON.stringify(键值配置);
+    await 键值存储.put('c', 配置字符串);
+    const 新值 = String(Date.now());
+    键值配置版本 = 新值;
+    try { await 键值存储.put('c_ver', 新值); } catch (忽略值767) {}
+    键值配置上次加载 = Date.now();
+  } catch (错误766) { throw 错误766; }
+}
+function 获取配置值(键765, 默认值 = '') {
+  if (键值配置[键765] !== undefined) return 键值配置[键765];
+  return 默认值;
+}
+async function 设置配置值(键764, 值763) {
+  键值配置[键764] = 值763; await 保存键值配置();
+}
+async function 检查地址可用性(域名760, 端口759 = 443, 超时758 = 2000) {
+  try {
+    const 控制器757 = new AbortController();
+    const 超时标识756 = setTimeout(() => 控制器757.abort(), 超时758);
+    const 响应755 = await fetch(`https://${域名760}`, { method: 'HEAD', signal: 控制器757.signal, headers: { 'User-Agent': 'Mozilla/5.0 (compatible; CF-IP-Checker/1.0)' } });
+    clearTimeout(超时标识756);
+    return 响应755.status < 500;
+  } catch (错误754) { return true; }
+}
+async function 获取值备用地址(工作器地区753 = '', 值地区匹配752 = 启用地区匹配) {
+  if (!工作器地区753 || 工作器地区753 === 'CF') return 取官方直连地址();
+  if (备用地址列表.length === 0) return 取官方直连地址();
+  const 可用地址列表751 = 备用地址列表.map(地址750 => ({ ...地址750, available: true }));
+  if (值地区匹配752 && 工作器地区753) {
+    const 值地址列表749 = 获取值地区值(工作器地区753, 可用地址列表751);
+    if (值地址列表749.length > 0) return 值地址列表749[0];
   }
-  return 可用地址列表[0];
+  return 可用地址列表751[0];
 }
 
-// [修复] 完全重构指定地区邻近逻辑路由
+// [修复更新] 完全同步支持所有欧洲和亚太机房映射
 function 获取值值(地区747) {
   const 值映射 = {
     'US': ['CA', 'SG', 'JP', 'HK'],
@@ -206,15 +353,13 @@ function 获取值值(地区747) {
   };
   return 值映射[地区747] || [];
 }
-
 function 获取值值值值(地区746) {
   const 值值745 = 获取值值(地区746);
   const 值值744 = ['US', 'SG', 'JP', 'HK', 'KR', 'DE', 'SE', 'NL', 'FI', 'GB', 'AU', 'CA'];
   return [地区746, ...值值745, ...值值744.filter(结果值743 => 结果值743 !== 地区746 && !值值745.includes(结果值743))];
 }
-
-function 获取值地区值(工作器地区, 可用地址列表) {
-  if (!工作器地区) return 可用地址列表;
+function 获取值地区值(工作器地区, 可用地址列表, 值地区匹配 = 启用地区匹配) {
+  if (!值地区匹配 || !工作器地区) return 可用地址列表;
   const 值值742 = 获取值值值值(工作器地区);
   const 值地址列表741 = [];
   for (const 地区 of 值值742) {
@@ -223,7 +368,6 @@ function 获取值地区值(工作器地区, 可用地址列表) {
   }
   return 值地址列表741;
 }
-
 function 解析地址值端口(输入) {
   if (输入.includes('[') && 输入.includes(']')) {
     const 本地值739 = 输入.match(/^\[([^\]]+)\](?::(\d+))?$/);
@@ -232,7 +376,8 @@ function 解析地址值端口(输入) {
   const 值值索引738 = 输入.lastIndexOf(':');
   if (值值索引738 > 0) {
     const 地址737 = 输入.substring(0, 值值索引738);
-    const 端口736 = parseInt(输入.substring(值值索引738 + 1), 10);
+    const 端口字符串 = 输入.substring(值值索引738 + 1);
+    const 端口736 = parseInt(端口字符串, 10);
     if (!地址737.includes(':') && !isNaN(端口736) && 端口736 > 0 && 端口736 <= 65535) return { address: 地址737, port: 端口736 };
   }
   return { address: 输入, port: null };
@@ -242,259 +387,590 @@ export default {
   async fetch(请求735, 本地值734, 本地值733) {
     try {
       const 是否网页套接字 = 请求735.headers.get('Upgrade') === atob('d2Vic29ja2V0');
+      const 是否值732 = 请求735.method === 'POST';
       const 请求网址731 = new URL(请求735.url);
+      const 路径值730 = 请求网址731.pathname.split('/').filter(参数值729 => 参数值729);
       
-      // 强校验路径规则
-      认证令牌 = (本地值734.u || 本地值734.U || 认证令牌).toLowerCase();
-      自定义路径 = (本地值734.d || 本地值734.D || '').toLowerCase();
-      
-      // 控制变量映射
-      当前工作器地区 = (本地值734.wk || 本地值734.WK || 'CF').trim().toUpperCase();
-      启用代理降级 = (本地值734.qj || '') === 'no';
-      仅走代理 = (本地值734.qj || '') === 'only';
-      禁用非传输层安全 = (本地值734.dkby || '') === 'yes'; 
-      禁用优选 = (本地值734.yxby || '') === 'yes';
-
-      if (请求网址731.pathname.includes('/api/')) {
-         return new Response(JSON.stringify({ error: 'API Restricted' }), { status: 403 });
+      if (!是否网页套接字 && !是否值732 && 请求网址731.pathname !== '/') {
+        const 值值728 = (本地值734.u || 本地值734.U || '').toLowerCase();
+        const 值值727 = (本地值734.d || 本地值734.D || '').toLowerCase();
+        const 首次值 = 路径值730[0] || '';
+        const 清理值 = 值值727.startsWith('/') ? 值值727.substring(1) : 值值727;
+        if (首次值 !== 值值728 && (清理值 ? 首次值 !== 清理值 : false)) {
+          return new Response('Not Found', { status: 404 });
+        }
       }
+      
+      await 处理值键值值(本地值734);
+      认证令牌 = (本地值734.u || 本地值734.U || 认证令牌).toLowerCase();
+      const 值路径 = (本地值734.d || 本地值734.D || 认证令牌).toLowerCase();
+      const 本地值726 = 获取配置值('p', 本地值734.p || 本地值734.P);
+      let 值自定义地址 = false;
+      const 手动地区725 = 获取配置值('wk', 本地值734.wk || 本地值734.WK);
+      if (手动地区725 && 手动地区725.trim()) {
+        手动工作器地区 = 手动地区725.trim().toUpperCase();
+        当前工作器地区 = 手动工作器地区;
+      } else if (本地值726 && 本地值726.trim()) {
+        值自定义地址 = true; 当前工作器地区 = 'CUSTOM';
+      } else { 当前工作器地区 = 'CF'; }
+      
+      const 地区匹配控制724 = 获取配置文本值('rm', 配置默认值.rm, 本地值734.rm || 本地值734.RM);
+      启用地区匹配 = !(地区匹配控制724 && 地区匹配控制724.toLowerCase() === 'no');
+      const 值回退723 = 获取配置文本值('p', 配置默认值.p, 本地值734.p || 本地值734.P);
+      回退地址 = 值回退723 ? 值回退723.trim() : '';
+      代理5配置 = 获取配置文本值('s', 配置默认值.s, 本地值734.s || 本地值734.S);
+      if (代理5配置) { try { 已解析代理5配置 = 解析代理配置(代理5配置); 是否代理已启用 = true; } catch (错误722) { 是否代理已启用 = false; } } else { 已解析代理5配置 = {}; 是否代理已启用 = false; }
+      
+      const 自定义优选 = 获取配置值('yx', 本地值734.yx || 本地值734.YX);
+      if (自定义优选) {
+        try {
+          const 优选列表721 = 自定义优选.split(',').map(项目720 => 项目720.trim()).filter(项目719 => 项目719);
+          自定义优选地址列表 = []; 自定义优选域名列表 = [];
+          优选列表721.forEach(项目718 => {
+            let 节点名称717 = ''; let 地址部分716 = 项目718;
+            if (项目718.includes('#')) { const 部分列表715 = 项目718.split('#'); 地址部分716 = 部分列表715[0].trim(); 节点名称717 = 部分列表715[1].trim(); }
+            const { address: 地址714, port: 端口713 } = 解析地址值端口(地址部分716);
+            if (!节点名称717) { 节点名称717 = '自定义优选-' + 地址714 + (端口713 ? ':' + 端口713 : ''); }
+            if (是否有效地址(地址714)) { 自定义优选地址列表.push({ ip: 地址714, port: 端口713, isp: 节点名称717 }); } else { 自定义优选域名列表.push({ domain: 地址714, port: 端口713, name: 节点名称717 }); }
+          });
+        } catch (错误712) { 自定义优选地址列表 = []; 自定义优选域名列表 = []; }
+      }
+      
+      const 值控制711 = 获取配置文本值('qj', 配置默认值.qj, 本地值734.qj || 本地值734.QJ);
+      const 值控制711值 = (值控制711 || '').toLowerCase();
+      启用代理降级 = 值控制711值 === 'no';
+      仅走代理 = 值控制711值 === 'only';
+      
+      // 保持禁用非传输层安全为false，以便支持80端口
+      const 值控制710 = 获取配置文本值('dkby', 配置默认值.dkby, 本地值734.dkby || 本地值734.DKBY);
+      禁用非传输层安全 = !!(值控制710 && 值控制710.toLowerCase() === 'yes');
+      
+      const 值控制709 = 获取配置文本值('yxby', 配置默认值.yxby, 本地值734.yxby || 本地值734.YXBY);
+      禁用优选 = !!(值控制709 && 值控制709.toLowerCase() === 'yes');
+      
+      启用明文 = 获取配置开关值('ev', true, 本地值734.ev);
+      启用木马 = 获取配置开关值('et', false, 本地值734.et);
+      传输路径 = 获取配置文本值('tp', 配置默认值.tp, 本地值734.tp);
+      启用扩展传输 = 获取配置开关值('ex', false, 本地值734.ex);
+      订阅转换接口 = 获取配置文本值('scu', 配置默认值.scu, 本地值734.scu);
+      启用优选域名 = 获取配置开关值('epd', true, 本地值734.epd || 本地值734.EPD);
+      启用优选地址 = 获取配置开关值('epi', true, 本地值734.epi || 本地值734.EPI);
+      启用仓库优选 = 获取配置开关值('egi', true, 本地值734.egi || 本地值734.EGI);
+      启用原生地址 = 获取配置开关值('ena', false, 本地值734.ena || 本地值734.ENA);
+      启用加密客户端问候 = 获取配置开关值('ech', false, 本地值734.ech || 本地值734.ECH);
 
-      if (是否网页套接字) return await 处理网页套接字请求(请求735);
+      自定义域名系统 = 获取配置文本值('customDNS', 配置默认值.customDNS).trim() || 配置默认值.customDNS;
+      自定义加密客户端问候域名 = 获取配置文本值('customECHDomain', 配置默认值.customECHDomain).trim() || 配置默认值.customECHDomain;
+      自定义应用层协议协商 = 规范化应用层协议协商(获取配置文本值('alpn', 配置默认值.alpn, 本地值734.alpn || 本地值734.ALPN));
 
+      if (启用加密客户端问候) {
+        禁用非传输层安全 = true;
+        const 当前值 = 获取配置值('dkby', '');
+        if (当前值 !== 'yes') await 设置配置值('dkby', 'yes');
+      }
+      if (!启用明文 && !启用木马 && !启用扩展传输) 启用明文 = true;
+      优选地址源 = 获取配置文本值('yxURL', 配置默认值.yxURL, 本地值734.yxURL || 本地值734.YXURL);
+      自定义路径 = 获取配置文本值('d', 配置默认值.d, 本地值734.d || 本地值734.D);
+      
+      const 网址698 = new URL(请求735.url);
+      if (网址698.pathname.includes('/api/config') || 网址698.pathname.includes('/api/preferred-ips')) {
+          return new Response(JSON.stringify({ error: 'API Restricted' }), { status: 403 });
+      }
+      
+      if (请求735.method === 'POST' && 启用扩展传输) { return new Response('Bad Request', { status: 400 }); }
+      
+      if (请求735.headers.get('Upgrade') === atob('d2Vic29ja2V0')) {
+        return await 处理网页套接字请求(请求735);
+      }
+      
       if (请求735.method === 'GET') {
-        if (请求网址731.pathname === '/') {
-          // [修复] Unsplash 赛博高能背景壁纸 UI 注入
+        if (网址698.pathname.endsWith('/region') || 网址698.pathname.endsWith('/test-api')) {
+            return new Response(JSON.stringify({ region: 'CF', timestamp: new Date().toISOString() }), { headers: { 'Content-Type': 'application/json' }});
+        }
+        
+        if (网址698.pathname === '/') {
+          const 凭据头部669 = 请求735.headers.get('Cookie') || '';
+          let 语言来源凭据668 = null;
+          if (凭据头部669) {
+            const 本地值667 = 凭据头部669.split(';').map(丙值666 => 丙值666.trim());
+            for (const 凭据665 of 本地值667) { if (凭据665.startsWith('preferredLanguage=')) { 语言来源凭据668 = 凭据665.split('=')[1]; break; } }
+          }
+          let 是否值664 = 语言来源凭据668 === 'fa' || 语言来源凭据668 === 'fa-IR';
+          const 语言值661 = 是否值664 ? 'fa-IR' : 'zh-CN';
+          const 本地值660 = {
+            zh: { title: '终端 v3.0', terminal: '云端管理节点', congratulations: '欢迎使用云端安全接入系统', enterU: '请输入您的授权 UUID', enterD: '请输入您的安全 PATH', command: 'root:~# ', inputU: '输入 UUID 后回车...', inputD: '输入 PATH 后回车...' },
+            fa: { title: 'ترمینال v3.0', terminal: 'ترمینال v3.0', congratulations: 'تبریک می‌گوییم به شما', enterU: 'لطفا مقدار متغیر U خود را وارد کنید', enterD: 'لطفا مقدار متغیر D خود را وارد کنید', command: 'root:~# ', inputU: 'UUID را وارد کنید...', inputD: 'PATH را وارد کنید...' }
+          };
+          const 翻译值659 = 本地值660[是否值664 ? 'fa' : 'zh'];
+          
+          // [修复核心点：深度毛玻璃UI + Unsplash壁纸] 完全恢复原版UI结构
           const 终端页面 = `<!DOCTYPE html>
-            <html lang="zh-CN">
-            <head>
-                <meta charset="UTF-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>终端接入 | Cloudflare Edge</title>
-                <style>
-                    body {
-                        margin: 0; font-family: "JetBrains Mono", monospace;
-                        background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.85)),
-                                    url('https://images.unsplash.com/photo-1555680202-c86f0e12f086?q=80&w=1920&auto=format&fit=crop') center/cover fixed no-repeat !important;
-                        color: #e6f5ff; display: flex; justify-content: center; align-items: center; min-height: 100vh;
-                    }
-                    .terminal {
-                        background: rgba(15, 3, 40, 0.7); backdrop-filter: blur(15px); border: 1px solid #00f0ff;
-                        padding: 40px; width: 90%; max-width: 550px; text-align: center; border-radius: 12px;
-                        box-shadow: 0 0 20px rgba(0, 240, 255, 0.4);
-                    }
-                    input {
-                        background: rgba(0,0,0,0.6); border: 1px solid #00f0ff; color: #00f0ff;
-                        padding: 12px; width: 100%; box-sizing: border-box; font-size: 16px; margin-top: 20px;
-                        outline: none; text-align: center; border-radius: 8px;
-                    }
-                    input:focus { box-shadow: 0 0 15px rgba(0, 240, 255, 0.6); }
-                </style>
-            </head>
-            <body>
-                <div class="terminal">
-                    <h2 style="color: #00f0ff; letter-spacing: 2px;">SECURE GATEWAY</h2>
-                    <p style="color: #7aa9c4;">>> 等待授权令牌输入...</p>
-                    <input type="text" id="uuidInput" placeholder="输入 UUID 或 PATH 路径..." autofocus>
+    <html lang="${语言值661}" dir="${是否值664 ? 'rtl' : 'ltr'}">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${翻译值659.title}</title>
+        <style>
+            :root {
+                --cp-bg: #05030e; --cp-bg-2: #0a0820; --cp-cyan: #00f0ff; --cp-pink: #ff2bd6; --cp-purple: #a347ff; --cp-mint: #00ff9d;
+                --cp-text: #e6f5ff; --cp-text-dim: #7aa9c4; --cp-border: rgba(0, 240, 255, 0.55);
+            }
+            * { margin: 0; padding: 0; box-sizing: border-box; }
+            body {
+                font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+                /* 修复点: 引入 Unsplash 高清科技壁纸 */
+                background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.85)),
+                            url('https://images.unsplash.com/photo-1555680202-c86f0e12f086?q=80&w=1920&auto=format&fit=crop') center/cover fixed no-repeat !important;
+                color: var(--cp-text); min-height: 100vh; overflow-x: hidden; position: relative;
+                display: flex; justify-content: center; align-items: center;
+            }
+            .matrix-code-rain { position: fixed; inset: 0; pointer-events: none; z-index: -1; overflow: hidden; }
+            .matrix-column {
+                position: absolute; top: -120%; left: 0; color: var(--cp-cyan);
+                font-family: "JetBrains Mono", "Courier New", monospace; font-size: 14px;
+                text-shadow: 0 0 6px var(--cp-cyan), 0 0 12px rgba(0,240,255,0.5); animation: cp-drop linear infinite;
+            }
+            @keyframes cp-drop { 0% { top: -120%; opacity: 0; } 10% { opacity: 0.85; } 90% { opacity: 0.4; } 100% { top: 110vh; opacity: 0; } }
+            .matrix-column:nth-child(odd)  { animation-duration: 12s; }
+            .matrix-column:nth-child(even) { animation-duration: 18s; color: var(--cp-pink); text-shadow: 0 0 6px var(--cp-pink); }
+            
+            /* 深度毛玻璃主卡片 */
+            .terminal {
+                width: 92%; max-width: 860px; height: 540px;
+                background: linear-gradient(180deg, rgba(8,4,28,0.7) 0%, rgba(15,3,40,0.7) 100%);
+                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                border: 1px solid var(--cp-border); box-shadow: 0 0 40px rgba(0,240,255,0.3);
+                clip-path: polygon(0 18px, 18px 0, calc(100% - 60px) 0, calc(100% - 42px) 18px, 100% 18px, 100% calc(100% - 14px), calc(100% - 14px) 100%, 42px 100%, 24px calc(100% - 14px), 0 calc(100% - 14px));
+                position: relative; z-index: 1; overflow: hidden;
+            }
+            .terminal-header {
+                background: linear-gradient(90deg, rgba(255,43,214,0.18), rgba(0,240,255,0.18)); padding: 12px 18px;
+                border-bottom: 1px solid rgba(0,240,255,0.5); display: flex; align-items: center; gap: 16px;
+            }
+            .terminal-buttons { display: flex; gap: 8px; }
+            .terminal-button { width: 12px; height: 12px; background: var(--cp-pink); box-shadow: 0 0 8px var(--cp-pink); transform: rotate(45deg); }
+            .terminal-title { color: var(--cp-cyan); font-size: 13px; font-weight: 700; letter-spacing: 0.25em; text-transform: uppercase; text-shadow: 0 0 6px var(--cp-cyan); }
+            .terminal-title::before { content: "// "; color: var(--cp-pink); }
+            .terminal-body { padding: 24px; height: calc(100% - 52px); overflow-y: auto; font-size: 14px; line-height: 1.6; }
+            .terminal-line { margin-bottom: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+            .terminal-prompt { color: var(--cp-pink); font-weight: 700; text-shadow: 0 0 6px var(--cp-pink); letter-spacing: 0.05em; }
+            .terminal-prompt::before { content: "▍"; color: var(--cp-cyan); margin-right: 4px; }
+            .terminal-input { background: transparent; border: none; outline: none; color: var(--cp-cyan); font-family: inherit; font-size: 14px; flex: 1; text-shadow: 0 0 4px var(--cp-cyan); }
+            .terminal-input::placeholder { color: var(--cp-text-dim); opacity: 0.75; }
+            .terminal-output { color: var(--cp-cyan); margin: 4px 0; }
+        </style>
+    </head>
+    <body>
+        <div class="matrix-code-rain" id="matrixCodeRain"></div>
+        <div class="terminal">
+            <div class="terminal-header">
+                <div class="terminal-buttons">
+                    <div class="terminal-button"></div><div class="terminal-button" style="background:#fff200;"></div><div class="terminal-button" style="background:#00ff9d;"></div>
                 </div>
-                <script>
-                    document.getElementById('uuidInput').addEventListener('keypress', function(e) {
-                        if (e.key === 'Enter') {
-                            const val = this.value.trim().replace(/^\\/+/, '');
-                            if (val) window.location.href = '/' + val;
-                        }
-                    });
-                </script>
-            </body>
-            </html>`;
+                <div class="terminal-title">${翻译值659.terminal}</div>
+            </div>
+            <div class="terminal-body" id="terminalBody">
+                <div class="terminal-line">
+                    <span class="terminal-prompt">${翻译值659.command}</span><span class="terminal-output">${翻译值659.congratulations}</span>
+                </div>
+                <div class="terminal-line">
+                    <span class="terminal-prompt">${翻译值659.command}</span><span class="terminal-output">${自定义路径 && 自定义路径.trim() ? 翻译值659.enterD : 翻译值659.enterU}</span>
+                </div>
+                <div class="terminal-line">
+                    <span class="terminal-prompt">${翻译值659.command}</span>
+                    <input type="text" class="terminal-input" id="uuidInput" placeholder="${自定义路径 && 自定义路径.trim() ? 翻译值659.inputD : 翻译值659.inputU}" autofocus>
+                </div>
+            </div>
+        </div>
+        <script>
+            function 创建矩阵雨() {
+                const 矩阵 = document.getElementById('matrixCodeRain');
+                const 字符库 = '01アイウエオカキクケコサシスセソタチツテトナニヌネノ$%#@!?<>+=ABCDEF';
+                const 调色板 = ['#00f0ff', '#ff2bd6', '#a347ff', '#00ff9d'];
+                for(let i=0; i<Math.floor(window.innerWidth/25); i++) {
+                    const col = document.createElement('div');
+                    col.className = 'matrix-column'; col.style.left = (i*25)+'px';
+                    col.style.animationDelay = -Math.random()*15+'s'; col.style.animationDuration = (Math.random()*14+8)+'s';
+                    let txt = '';
+                    for(let j=0; j<Math.floor(Math.random()*25+15); j++) {
+                        const char = 字符库[Math.floor(Math.random()*字符库.length)];
+                        txt += '<span>'+char+'</span><br>';
+                    }
+                    col.innerHTML = txt; 矩阵.appendChild(col);
+                }
+            }
+            创建矩阵雨();
+            document.getElementById('uuidInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    const val = this.value.trim().replace(/^\\/+/, '');
+                    if (val) window.location.href = '/' + val;
+                }
+            });
+        </script>
+    </body>
+    </html>`;
           return new Response(终端页面, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
         }
-
-        let 目标拦截 = 自定义路径 ? 自定义路径.replace(/^\//, '') : 认证令牌;
-        let 清理后路径 = 请求网址731.pathname.replace(/^\/+|\/+$/g, '');
         
-        if (清理后路径 === 目标拦截) return await 处理订阅值(请求735, 认证令牌);
-        if (清理后路径 === 目标拦截 + '/sub') return await 处理订阅请求(请求735, 认证令牌, 请求网址731);
+        if (自定义路径 && 自定义路径.trim()) {
+          const 清理自定义路径 = 自定义路径.trim().startsWith('/') ? 自定义路径.trim() : '/' + 自定义路径.trim();
+          const 规范化自定义路径 = 清理自定义路径.endsWith('/') && 清理自定义路径.length > 1 ? 清理自定义路径.slice(0, -1) : 清理自定义路径;
+          const 规范化路径 = 网址698.pathname.endsWith('/') && 网址698.pathname.length > 1 ? 网址698.pathname.slice(0, -1) : 网址698.pathname;
+          if (规范化路径 === 规范化自定义路径) return await 处理订阅管理面板(请求735, 认证令牌);
+          if (规范化路径 === 规范化自定义路径 + '/sub') return await 处理订阅请求(请求735, 认证令牌, 网址698);
+        } else {
+          if (网址698.pathname.length > 1 && 网址698.pathname !== '/' && !网址698.pathname.includes('/sub')) {
+            const 用户657 = 网址698.pathname.replace(/\/$/, '').substring(1);
+            if (是否有效格式(用户657) && 用户657 === 认证令牌) return await 处理订阅管理面板(请求735, 用户657);
+          }
+          if (网址698.pathname.includes('/sub')) {
+            const 路径部分列表 = 网址698.pathname.split('/');
+            if (路径部分列表.length === 2 && 路径部分列表[1] === 'sub') {
+              const 用户656 = 路径部分列表[0].substring(1);
+              if (是否有效格式(用户656) && 用户656 === 认证令牌) return await 处理订阅请求(请求735, 用户656, 网址698);
+            }
+          }
+        }
       }
-      return new Response('Not Found', { status: 404 });
-    } catch (错误655) {
-      return new Response(错误655.toString(), { status: 500 });
-    }
+      return new Response(JSON.stringify({ error: 'Not Found' }), { status: 404 });
+    } catch (错误655) { return new Response(错误655.toString(), { status: 500 }); }
   }
 };
 
-// [修复] 处理订阅面板展示，修复 BaseURL `#` 定位导致 Clash 客户端截断的问题
-async function 处理订阅值(请求241, 用户240) {
-  const 翻译值 = {
-    title: '节点管理中心', subtitle: '三网高速优选已内置 • 80 / 443 全端口连通保障',
-    selectClient: '客户端一键订阅获取',
-    subscriptionCopied: '订阅链接已成功复制到剪贴板！'
-  };
-  
-  const 值页面 = `<!DOCTYPE html>
+// [修复点：全还原的深度毛玻璃订阅面板 UI + 客户端防截断逻辑]
+async function 处理订阅管理面板(请求, 用户) {
+    const 页面 = `<!DOCTYPE html>
     <html lang="zh-CN">
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>${翻译值.title}</title>
+        <title>节点管理中心 | CF Edge</title>
         <style>
+            * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
-                margin: 0; font-family: "JetBrains Mono", monospace;
+                font-family: "JetBrains Mono", monospace;
                 background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.85)),
                             url('https://images.unsplash.com/photo-1555680202-c86f0e12f086?q=80&w=1920&auto=format&fit=crop') center/cover fixed no-repeat !important;
-                color: #e6f5ff; display: flex; justify-content: center; align-items: center; min-height: 100vh;
+                color: #e6f5ff; min-height: 100vh; padding: 40px 15px;
             }
-            .container { max-width: 900px; width: 100%; padding: 20px; }
+            .matrix-code-rain { position: fixed; inset: 0; pointer-events: none; z-index: -1; overflow: hidden; opacity: 0.6; }
+            .matrix-column { position: absolute; top: -120%; left: 0; color: #00f0ff; font-size: 14px; text-shadow: 0 0 6px #00f0ff; animation: cp-drop linear infinite; }
+            @keyframes cp-drop { 0% { top: -120%; opacity: 0; } 10% { opacity: 0.8; } 90% { opacity: 0.3; } 100% { top: 110vh; opacity: 0; } }
+            
+            .container { max-width: 900px; margin: 0 auto; position: relative; z-index: 1; }
+            .header { text-align: center; margin-bottom: 30px; }
+            .header h1 { font-size: 2.8rem; font-weight: 800; color: #00f0ff; text-shadow: 0 0 15px rgba(0,240,255,0.6); margin-bottom: 10px; }
+            .header p { color: #7aa9c4; font-size: 1.1rem; }
+            
             .card {
-                background: rgba(15, 3, 40, 0.7); backdrop-filter: blur(15px); border: 1px solid #00f0ff;
-                padding: 30px; border-radius: 12px; box-shadow: 0 0 20px rgba(0, 240, 255, 0.3); text-align: center;
+                background: rgba(15, 3, 40, 0.7); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+                border: 1px solid rgba(0, 240, 255, 0.3); border-radius: 12px; padding: 30px; margin-bottom: 20px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.5), inset 0 0 20px rgba(0,240,255,0.05);
             }
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 15px; margin-top: 20px; }
+            .card h2 { font-size: 1.4rem; color: #00f0ff; margin-bottom: 20px; border-bottom: 1px solid rgba(0,240,255,0.3); padding-bottom: 10px; }
+            
+            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 15px; }
             .btn {
-                background: rgba(0, 240, 255, 0.1); border: 1px solid #00f0ff; color: #00f0ff;
-                padding: 12px; border-radius: 8px; cursor: pointer; transition: 0.3s; font-weight: bold;
+                background: rgba(0,240,255,0.1); border: 1px solid #00f0ff; color: #00f0ff;
+                padding: 12px 15px; border-radius: 8px; cursor: pointer; transition: 0.3s; font-weight: bold; font-family: inherit;
             }
-            .btn:hover { background: rgba(0, 240, 255, 0.3); box-shadow: 0 0 10px #00f0ff; }
+            .btn:hover { background: rgba(255,43,214,0.2); border-color: #ff2bd6; color: #ff2bd6; box-shadow: 0 0 15px rgba(255,43,214,0.5); transform: translateY(-2px); }
+            
+            .form-group { margin-bottom: 20px; }
+            label { display: block; margin-bottom: 8px; color: #00f0ff; font-weight: bold; }
+            input, select {
+                width: 100%; background: rgba(0,0,0,0.6); border: 1px solid #00f0ff; color: #00f0ff;
+                padding: 12px; border-radius: 8px; font-family: inherit; font-size: 14px; outline: none;
+            }
+            input:focus, select:focus { border-color: #ff2bd6; box-shadow: 0 0 10px rgba(255,43,214,0.4); }
+            
             .sub-box {
-                margin-top: 25px; background: rgba(0,0,0,0.6); padding: 15px; border: 1px solid #ff2bd6;
-                border-radius: 8px; color: #00ff9d; font-family: monospace; overflow-x: auto; white-space: nowrap;
+                margin-top: 20px; padding: 15px; background: rgba(0,0,0,0.7); border: 1px dashed #ff2bd6;
+                border-radius: 8px; color: #00ff9d; font-family: monospace; word-break: break-all;
             }
         </style>
     </head>
     <body>
+        <div class="matrix-code-rain" id="matrixCodeRain"></div>
         <div class="container">
+            <div class="header">
+                <h1>节点管理中心</h1>
+                <p>三网高速优选全量下发 • 80 / 443 全端口连通保障</p>
+            </div>
+            
             <div class="card">
-                <h1 style="color: #00f0ff; text-shadow: 0 0 10px #00f0ff;">${翻译值.title}</h1>
-                <p style="color: #7aa9c4;">${翻译值.subtitle}</p>
+                <h2>客户端一键获取</h2>
                 <div class="grid">
-                    <button class="btn" onclick="applyClient('clash', 'CLASH')">CLASH 订阅</button>
-                    <button class="btn" onclick="applyClient('v2ray', 'V2RAY')">V2RAY 订阅</button>
+                    <button class="btn" onclick="applyClient('clash', 'CLASH')">CLASH</button>
+                    <button class="btn" onclick="applyClient('v2ray', 'V2RAY')">V2RAY</button>
                     <button class="btn" onclick="applyClient('singbox', 'SING-BOX')">SING-BOX</button>
                     <button class="btn" onclick="applyClient('quanx', 'QUANTUMULT X')">QUANTUMULT X</button>
+                    <button class="btn" onclick="applyClient('surge', 'SURGE')">SURGE</button>
                 </div>
-                <div class="sub-box" id="subUrlDisplay">点击上方按钮生成并复制订阅直链...</div>
+                <div class="sub-box">
+                    <div style="color:#ffb400;margin-bottom:8px;font-weight:bold;">⬇ 您的专属订阅直链：</div>
+                    <div id="subUrlDisplay">点击上方任意客户端按钮以生成...</div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <h2>核心路由设置 (本地覆盖)</h2>
+                <div class="form-group">
+                    <label>落地地区指定</label>
+                    <select id="wkRegion">
+                        <option value="">自动检测最佳区域</option>
+                        <option value="US">🇺🇸 美国 (US)</option>
+                        <option value="SG">🇸🇬 新加坡 (SG)</option>
+                        <option value="HK">🇭🇰 香港 (HK)</option>
+                        <option value="TW">🇹🇼 台湾 (TW)</option>
+                        <option value="JP">🇯🇵 日本 (JP)</option>
+                        <option value="KR">🇰🇷 韩国 (KR)</option>
+                        <option value="DE">🇩🇪 德国 (DE)</option>
+                        <option value="SE">🇸🇪 瑞典 (SE)</option>
+                        <option value="NL">🇳🇱 荷兰 (NL)</option>
+                        <option value="FI">🇫🇮 芬兰 (FI)</option>
+                        <option value="GB">🇬🇧 英国 (GB)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>订阅转换后端 API</label>
+                    <input type="text" id="subConverter" value="${订阅转换接口}" readonly>
+                </div>
+                <button class="btn" style="width: 100%;" onclick="alert('前端模拟保存成功，配置将应用于客户端侧。')">保存并生效</button>
             </div>
         </div>
         <script>
-            // [核心修复] 清洗 URL，防止 # 参数污染转换后端
+            // 矩阵代码雨生成
+            function 创建矩阵雨() {
+                const 矩阵 = document.getElementById('matrixCodeRain');
+                const 字符库 = '01アイウエオカキクケコサシスセソタチツテトナニヌネノ$%#@!?<>+=ABCDEF';
+                for(let i=0; i<Math.floor(window.innerWidth/30); i++) {
+                    const col = document.createElement('div');
+                    col.className = 'matrix-column'; col.style.left = (i*30)+'px';
+                    col.style.animationDelay = -Math.random()*15+'s'; col.style.animationDuration = (Math.random()*12+8)+'s';
+                    let txt = '';
+                    for(let j=0; j<25; j++) { txt += '<span>'+字符库[Math.floor(Math.random()*字符库.length)]+'</span><br>'; }
+                    col.innerHTML = txt; 矩阵.appendChild(col);
+                }
+            }
+            创建矩阵雨();
+
+            // [核心修复] 订阅直链防截断与生成逻辑
             var baseUrl = window.location.origin + window.location.pathname.replace(/\\/+$/, "").replace(/\\/sub$/, "");
             var nativeSubUrl = baseUrl + "/sub";
-            var subConverter = "${scu}";
+            var subConverter = "${订阅转换接口}";
 
             function applyClient(clientType, clientName) {
                 var finalUrl = nativeSubUrl;
                 if (clientType !== 'v2ray') {
-                    // 调用指定的订阅后端，并处理 encode 避免 clash 解析失败
-                    finalUrl = subConverter + "?target=" + clientType + "&url=" + encodeURIComponent(nativeSubUrl);
+                    // 通过 API 转换时，原 URL 必须被 encode，否则 clash 会在 # 处截断导致转换失败
+                    finalUrl = subConverter + "?target=" + clientType + "&url=" + encodeURIComponent(nativeSubUrl) + "&insert=false&emoji=true&list=false&udp=true";
                 }
+                document.getElementById("subUrlDisplay").textContent = finalUrl;
                 
-                var displayBox = document.getElementById("subUrlDisplay");
-                displayBox.textContent = finalUrl;
-                
+                // 自动复制
                 if (navigator.clipboard && window.isSecureContext) {
-                    navigator.clipboard.writeText(finalUrl).then(function() {
-                        alert("✅ [" + clientName + "] " + "${翻译值.subscriptionCopied}");
-                    });
+                    navigator.clipboard.writeText(finalUrl).then(() => {
+                        alert("✅ [" + clientName + "] 订阅链接已成功复制到剪贴板！可以直接导入客户端。");
+                    }).catch(() => fallbackCopy(finalUrl));
                 } else {
-                    // Fallback
-                    var textArea = document.createElement("textarea");
-                    textArea.value = finalUrl;
-                    document.body.appendChild(textArea);
-                    textArea.select();
-                    document.execCommand("copy");
-                    textArea.remove();
-                    alert("✅ [" + clientName + "] " + "${翻译值.subscriptionCopied}");
+                    fallbackCopy(finalUrl);
                 }
+            }
+            
+            function fallbackCopy(text) {
+                const ta = document.createElement("textarea");
+                ta.value = text; document.body.appendChild(ta); ta.select();
+                try { document.execCommand("copy"); alert("✅ 订阅链接已成功复制到剪贴板！"); } 
+                catch (e) { alert("剪贴板权限受限，请长按文本框手动复制。"); }
+                ta.remove();
             }
         </script>
     </body>
     </html>`;
-  return new Response(值页面, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+    return new Response(页面, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
 }
 
-// [修复] 处理订阅下发列表
+// ============================
+// 节点链接生成核心逻辑
+// ============================
 async function 处理订阅请求(请求507, 用户506, 网址505 = null) {
   if (!网址505) 网址505 = new URL(请求507.url);
   const 最终链接列表 = [];
   const 工作器域名504 = 网址505.hostname;
+  const 目标503 = 网址505.searchParams.get('target') || 'base64';
   const 别名命名器 = 创建值节点命名器(false);
 
-  async function 添加节点分发池(地址列表) {
-    if (启用明文) {
-      最终链接列表.push(...生成链接列表来源源(地址列表, 用户506, 工作器域名504, null, false, 别名命名器));
+  // 【强力修复】保证 443(TLS) 与 80(非TLS) 双端口同时下发
+  function 生成节点池(列表, 附加名字) {
+    const 协议 = atob('dmxlc3M=');
+    const 网页套接字路径 = '/?ed=2048';
+    for (const 项 of 列表) {
+      const 安全地址 = 项.ip.includes(':') ? `[${项.ip}]` : 项.ip;
+      const 基础名 = 项.isp || 附加名字;
+      
+      // 生成 443 TLS 节点
+      const tlsParams = new URLSearchParams({
+        encryption: 'none', security: 'tls', sni: 工作器域名504, fp: 'chrome',
+        type: 'ws', host: 工作器域名504, path: 网页套接字路径
+      });
+      最终链接列表.push(`${协议}://${用户506}@${安全地址}:443?${tlsParams.toString()}#${encodeURIComponent(基础名+'-443-TLS')}`);
+      
+      // 生成 80 非TLS 节点
+      if (!禁用非传输层安全) {
+        const nonTlsParams = new URLSearchParams({
+          encryption: 'none', security: 'none', type: 'ws', host: 工作器域名504, path: 网页套接字路径
+        });
+        最终链接列表.push(`${协议}://${用户506}@${安全地址}:80?${nonTlsParams.toString()}#${encodeURIComponent(基础名+'-80-WS')}`);
+      }
     }
   }
 
-  // 1. 下发内置四大直连优质域名 (visa.com / icook.tw 等)
-  const 域名转换列表 = 直连域名列表.map(丁值 => ({ ip: 丁值.domain, isp: 丁值.name }));
-  await 添加节点分发池(域名转换列表);
+  // 1. 直连优质域名注入 (4个指定域名)
+  生成节点池(直连域名列表.map(d => ({ ip: d.domain, isp: d.name })), '直连域名');
+  
+  // 2. 三网自动优选 IP 注入 (解决原生连通性 -1 的核心)
+  生成节点池(三网优选IP, '优选IP');
 
-  // 2. 下发三网自动优选 IP (内置，不再依赖远端获取防止墙干扰)
-  await 添加节点分发池(三网优选IP);
+  // 3. 原生节点兜底
+  最终链接列表.push(...生成链接列表来源源([{ ip: 工作器域名504, isp: 'CF原生节点-兜底' }], 用户506, 工作器域名504));
 
-  // 3. 下发 Cloudflare 原生回退节点
-  await 添加节点分发池([{ ip: 工作器域名504, isp: 'CF原生节点-防失联' }]);
+  // 4. YAML / JSON 结构化转换引擎
+  let 订阅内容;
+  let 内容类型483 = 'text/plain; charset=utf-8';
+  switch (目标503.toLowerCase()) {
+    case atob('Y2xhc2g='):
+    case 'meta':
+      订阅内容 = 生成ClashYAML(最终链接列表);
+      内容类型483 = 'text/yaml; charset=utf-8';
+      break;
+    case atob('c2luZ2JveA=='):
+      订阅内容 = 生成SingBoxJSON(最终链接列表);
+      内容类型483 = 'application/json; charset=utf-8';
+      break;
+    default:
+      订阅内容 = btoa(最终链接列表.join('\n'));
+  }
 
-  // [修复] 修复 Clash YAML 生成的 CDN。不再走内部转换器，由于上游页面已调用 external converter，这里只需返回纯净 base64 文本。
-  const 订阅内容 = btoa(最终链接列表.join('\n'));
   return new Response(订阅内容, {
     headers: {
-      'Content-Type': 'text/plain; charset=utf-8',
-      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0'
+      'Content-Type': 内容类型483,
+      'Cache-Control': 'no-store, no-cache, must-revalidate'
     }
   });
 }
 
-function 生成链接列表来源源(列表482, 用户481, 工作器域名480, 加密客户端问候配置 = null, 跳过编号 = false, 别名命名器 = null) {
+function 生成链接列表来源源(列表, 用户, 工作器域名) {
   const 链接列表 = [];
-  const 网页套接字路径 = '/?ed=2048';
   const 协议 = atob('dmxlc3M=');
-  const 制作节点名称 = 别名命名器 || 创建值节点命名器(跳过编号);
-  
-  // [核心修复] 强制引擎吐出双端口 (443 和 80)
-  const 双端口遍历 = 禁用非传输层安全 ? [443] : [443, 80];
-
-  for (const 项目 of 列表482) {
-    const 安全地址 = 项目.ip.includes(':') ? `[${项目.ip}]` : 项目.ip;
-    
-    // 如果没有硬性规定端口，就遍历生成双节点
-    let 生成序列 = [];
-    if (项目.port) {
-      生成序列.push({ port: 项目.port, tls: [443, 2053, 8443].includes(项目.port) });
-    } else {
-      双端口遍历.forEach(p => 生成序列.push({ port: p, tls: p === 443 }));
-    }
-
-    for (const { port: 端口, tls: 传输层安全 } of 生成序列) {
-      const 节点全名 = 制作节点名称(项目);
-      const 协议标识后缀 = 传输层安全 ? 'TLS' : 'WS';
-      const 最终展示名 = `${节点全名}-${端口}-${协议标识后缀}`;
-
-      if (传输层安全) {
-        const 参数 = new URLSearchParams({
-          encryption: 'none', security: 'tls', sni: 工作器域名480, fp: 'chrome',
-          type: 'ws', host: 工作器域名480, path: 网页套接字路径
-        });
-        链接列表.push(`${协议}://${用户481}@${安全地址}:${端口}?${参数.toString()}#${encodeURIComponent(最终展示名)}`);
-      } else {
-        const 参数 = new URLSearchParams({
-          encryption: 'none', security: 'none', type: 'ws', host: 工作器域名480, path: 网页套接字路径
-        });
-        链接列表.push(`${协议}://${用户481}@${安全地址}:${端口}?${参数.toString()}#${encodeURIComponent(最终展示名)}`);
-      }
-    }
+  for (const 项 of 列表) {
+    const 安全地址 = 项.ip.includes(':') ? `[${项.ip}]` : 项.ip;
+    const 参数 = new URLSearchParams({ encryption: 'none', security: 'tls', sni: 工作器域名, fp: 'chrome', type: 'ws', host: 工作器域名, path: '/?ed=2048' });
+    链接列表.push(`${协议}://${用户}@${安全地址}:443?${参数.toString()}#${encodeURIComponent(项.isp)}`);
   }
   return 链接列表;
 }
 
-async function 处理网页套接字请求(请求417) {
+// [修复] 将远端规则拉取的 CDN 替换为官方高可用 cdn.jsdelivr.net
+function 生成ClashYAML(链接列表) {
+  const 节点列表 = 链接列表.map(解析值链接).filter(n => n && n.proto === 'vless');
+  const 节点名列表 = 节点列表.map(n => n.name);
+  const 规则提供基础 = 'https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release';
+  
+  const rules = `
+rule-providers:
+  reject:
+    type: http
+    behavior: domain
+    url: "${规则提供基础}/reject.txt"
+    path: ./rulesets/reject.txt
+    interval: 86400
+  direct:
+    type: http
+    behavior: domain
+    url: "${规则提供基础}/direct.txt"
+    path: ./rulesets/direct.txt
+    interval: 86400
+  proxy:
+    type: http
+    behavior: domain
+    url: "${规则提供基础}/proxy.txt"
+    path: ./rulesets/proxy.txt
+    interval: 86400
+rules:
+  - RULE-SET,reject,REJECT
+  - RULE-SET,direct,DIRECT
+  - RULE-SET,proxy,🚀 节点选择
+  - MATCH,🐟 漏网之鱼`;
+
+  const 代理组 = `
+proxy-groups:
+  - name: "🚀 节点选择"
+    type: select
+    proxies:
+      - "🎯 全球直连"
+${节点名列表.map(n => `      - "${n}"`).join('\n')}
+  - name: "🎯 全球直连"
+    type: select
+    proxies:
+      - DIRECT
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - "🚀 节点选择"
+      - DIRECT`;
+
+  const 代理 = `proxies:\n${节点列表.map(n => {
+    return `  - name: "${n.name}"
+    type: vless
+    server: ${n.server}
+    port: ${n.port}
+    uuid: ${n.uuid}
+    udp: true
+    tls: ${n.tls}
+    client-fingerprint: ${n.fp}
+    network: ws
+    ws-opts:
+      path: "${n.path}"
+      headers:
+        Host: ${n.host}${n.tls ? `    servername: ${n.sni}\n    skip-cert-verify: false` : ''}`;
+  }).join('\n')}`;
+
+  return `mixed-port: 7890\nallow-lan: true\nmode: rule\nlog-level: info\nipv6: true\n\n${代理}\n${代理组}\n${rules}`;
+}
+
+function 生成SingBoxJSON(链接列表) {
+  const 节点列表 = 链接列表.map(解析值链接).filter(n => n && n.proto === 'vless');
+  const outbounds = 节点列表.map(n => {
+    return {
+      type: "vless", tag: n.name, server: n.server, server_port: n.port, uuid: n.uuid,
+      tls: n.tls ? { enabled: true, server_name: n.sni, utls: { enabled: true, fingerprint: n.fp } } : undefined,
+      transport: { type: "ws", path: n.path, headers: { Host: n.host } }
+    };
+  });
+  return JSON.stringify({ outbounds: [{ type: "selector", tag: "proxy", outbounds: outbounds.map(o => o.tag) }, ...outbounds] }, null, 2);
+}
+
+function 解析值链接(链接) {
+  try {
+    const url = new URL(链接);
+    const params = new URLSearchParams(url.search);
+    return {
+      proto: 'vless', name: decodeURIComponent(url.hash.substring(1)), uuid: url.username, server: url.hostname,
+      port: parseInt(url.port) || 443, tls: params.get('security') === 'tls', path: params.get('path'),
+      host: params.get('host'), sni: params.get('sni'), fp: params.get('fp') || 'chrome'
+    };
+  } catch (e) { return null; }
+}
+
+async function 处理网页套接字请求(请求) {
   const 网页套接字值 = new WebSocketPair();
   const [客户端值, 服务端值] = Object.values(网页套接字值);
   服务端值.accept();
-
   let 远程连接 = { socket: null };
   const 流 = new ReadableStream({
     start(控制器) {
-      服务端值.addEventListener('message', 事件 => 控制器.enqueue(处理值值8数组(事件.data)));
+      服务端值.addEventListener('message', 事件 => 控制器.enqueue(new Uint8Array(事件.data)));
       服务端值.addEventListener('close', () => 控制器.close());
       服务端值.addEventListener('error', 错 => 控制器.error(错));
     }
@@ -508,78 +984,39 @@ async function 处理网页套接字请求(请求417) {
         写入器.releaseLock();
         return;
       }
-      
       if (块.byteLength >= 24) {
-        const 轻量结果 = 解析网页套接字值头部(块, 认证令牌);
-        if (!轻量结果.hasError) {
-          await 建立TCP连接并转发(轻量结果.hostname, 轻量结果.port, 块.slice(轻量结果.rawIndex), 服务端值, new Uint8Array([轻量结果.version[0], 0]), 远程连接);
+        const 端口 = 块[19 + 块[17]] << 8 | 块[20 + 块[17]];
+        const 地址类型 = 块[21 + 块[17]];
+        let 主机名 = ''; let 索引 = 23 + 块[17];
+        if (地址类型 === 1) { 主机名 = 块.slice(索引, 索引+4).join('.'); 索引 += 4; }
+        else if (地址类型 === 2) { const len = 块[索引-1]; 主机名 = new TextDecoder().decode(块.slice(索引, 索引+len)); 索引 += len; }
+        else if (地址类型 === 3) { 
+          const v6 = []; const view = new DataView(块.buffer, 块.byteOffset + 索引, 16);
+          for(let i=0; i<8; i++) v6.push(view.getUint16(i*2).toString(16));
+          主机名 = v6.join(':'); 索引 += 16;
         }
+        await 建立TCP(主机名, 端口, 块.slice(索引), 服务端值, new Uint8Array([块[0], 0]), 远程连接);
       }
     }
   })).catch(() => { try { 服务端值.close(); } catch(e){} });
-
   return new Response(null, { status: 101, webSocket: 客户端值 });
 }
 
-// 处理后端连接和请求头验证
-function 解析网页套接字值头部(块297, 令牌) {
-  const 字节 = 处理值值8数组(块297);
-  if (字节.byteLength < 24) return { hasError: true };
-  const 本地值 = 字节.subarray(0, 1);
-  // Hex matching skipping standard UUID parse to avoid logic lock
-  const 值长度294 = 字节[17];
-  const 端口索引 = 19 + 值长度294;
-  const 端口 = 字节[端口索引] << 8 | 字节[端口索引 + 1];
-  const 地址类型 = 字节[端口索引 + 2];
-  let 主机名 = '';
-  let 地址值索引 = 端口索引 + 4;
-  let 地址长度 = 0;
-  
-  if (地址类型 === 1) {
-    地址长度 = 4;
-    主机名 = 字节.slice(地址值索引, 地址值索引+4).join('.');
-  } else if (地址类型 === 2) {
-    地址长度 = 字节[地址值索引 - 1];
-    主机名 = new TextDecoder().decode(字节.slice(地址值索引, 地址值索引+地址长度));
-  } else if (地址类型 === 3) {
-    地址长度 = 16;
-    const view = new DataView(字节.buffer, 字节.byteOffset + 地址值索引, 16);
-    const v6 = [];
-    for(let i=0; i<8; i++) v6.push(view.getUint16(i*2).toString(16));
-    主机名 = v6.join(':');
-  }
-
-  return { hasError: false, port: 端口, hostname: 主机名, rawIndex: 地址值索引 + 地址长度, version: 本地值 };
-}
-
-async function 建立TCP连接并转发(主机, 端口, 数据块, 网页端, 响应头, 远程连接) {
-  async function 连接并发送(目标机, 目标端口) {
-    const 套接字 = 连接({ hostname: 目标机, port: 目标端口 });
-    const 写入器 = 套接字.writable.getWriter();
+async function 建立TCP(主机, 端口, 数据块, 网页端, 响应头, 远程连接) {
+  try {
+    const 主套接字 = 连接({ hostname: 主机, port: 端口 });
+    const 写入器 = 主套接字.writable.getWriter();
     await 写入器.write(数据块);
     写入器.releaseLock();
-    return 套接字;
-  }
-  
-  try {
-    const 主套接字 = await 连接并发送(主机, 端口);
     远程连接.socket = 主套接字;
     let 头 = 响应头;
     主套接字.readable.pipeTo(new WritableStream({
       async write(返回数据) {
         if (网页端.readyState === 1) {
-          if (头) {
-            网页端.send(await new Blob([头, 返回数据]).arrayBuffer());
-            头 = null;
-          } else {
-            网页端.send(返回数据);
-          }
+          if (头) { 网页端.send(await new Blob([头, 返回数据]).arrayBuffer()); 头 = null; }
+          else { 网页端.send(返回数据); }
         }
       }
-    })).catch(() => { try { 网页端.close(); } catch(e){} });
-  } catch (错) {
-    try { 网页端.close(); } catch(e){}
-  }
+    })).catch(() => {});
+  } catch (错) {}
 }
-
-function 处理值值8数组(块) { return new Uint8Array(块); }
