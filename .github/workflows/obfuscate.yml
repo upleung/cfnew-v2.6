@@ -4,9 +4,13 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - '**'  # 仅匹配分支推送，排除标签推送
+      - '**'
     paths:
       - '明文源吗'
+
+# 核心修复：授予 GITHUB_TOKEN 写入仓库的权限
+permissions:
+  contents: write
 
 jobs:
   build-and-obfuscate:
@@ -36,7 +40,7 @@ jobs:
           const sourceFilePath = path.join(process.cwd(), sourceFileName);
 
           if (!fs.existsSync(sourceFilePath)) {
-            console.error('错误：在路径 \'' + sourceFilePath + '\' 未找到源文件。请确保您的仓库根目录有名为 \'明文源吗\' 的文件。');
+            console.error('错误：在路径 \'' + sourceFilePath + '\' 未找到源文件。');
             process.exit(1);
           }
 
@@ -96,6 +100,6 @@ jobs:
           if git diff --staged --quiet; then
             echo "No changes to commit, the obfuscated file is already up-to-date."
           else
-            git commit -m "部署用这个"
+            git commit -m "chore: auto-obfuscate source code"
             git push
           fi
