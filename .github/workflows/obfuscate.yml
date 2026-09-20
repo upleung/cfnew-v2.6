@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - '**'
+      - main
+      - master
     paths:
       - '明文源吗'
 
-# 核心修复：授予 GITHUB_TOKEN 写入仓库的权限
 permissions:
   contents: write
 
@@ -40,14 +40,14 @@ jobs:
           const sourceFilePath = path.join(process.cwd(), sourceFileName);
 
           if (!fs.existsSync(sourceFilePath)) {
-            console.error('错误：在路径 \'' + sourceFilePath + '\' 未找到源文件。');
+            console.error('错误：未找到源文件。');
             process.exit(1);
           }
 
           const originalCode = fs.readFileSync(sourceFilePath, 'utf8');
 
           if (!originalCode || originalCode.trim().length === 0) {
-            console.error('错误：源文件 ' + sourceFileName + ' 为空。');
+            console.error('错误：源文件为空。');
             process.exit(1);
           }
 
@@ -62,31 +62,17 @@ jobs:
               stringArrayRotate: true,
               stringArrayShuffle: true,
               stringArrayWrappersCount: 2,
-              stringArrayWrappersChainedCalls: false,
-              stringArrayWrappersParametersMaxCount: 3,
               renameGlobals: true,
               identifierNamesGenerator: 'mangled-shuffled',
-              identifierNamesCache: null,
-              identifiersPrefix: '',
               renameProperties: false,
-              renamePropertiesMode: 'safe',
-              ignoreImports: false,
               target: 'browser',
-              numbersToExpressions: false,
-              simplify: false,
               splitStrings: true,
               splitStringsChunkLength: 1,
-              transformObjectKeys: false,
               unicodeEscapeSequence: true,
-              selfDefending: false,
-              debugProtection: false,
-              debugProtectionInterval: 0,
-              disableConsoleOutput: true,
-              domainLock: []
+              disableConsoleOutput: true
           };
 
           const obfuscatedCode = JavaScriptObfuscator.obfuscate(originalCode, obfuscationOptions).getObfuscatedCode();
-          
           fs.writeFileSync(path.join(process.cwd(), outputFileName), obfuscatedCode, 'utf8');
           console.log('成功将 \'' + sourceFileName + '\' 混淆并保存至 \'' + outputFileName + '\'。');
           EOF
@@ -98,7 +84,7 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add '少年你相信光吗'
           if git diff --staged --quiet; then
-            echo "No changes to commit, the obfuscated file is already up-to-date."
+            echo "No changes to commit."
           else
             git commit -m "chore: auto-obfuscate source code"
             git push

@@ -1,12 +1,13 @@
 name: Deploy Worker Script
 
 on:
-  workflow_dispatch:
   push:
+    branches:
+      - main
+      - master
     tags:
-      - '*'
+      - 'v*'
 
-# 核心修复：授予 GITHUB_TOKEN 创建 Release 和上传文件的权限
 permissions:
   contents: write
 
@@ -15,17 +16,22 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Get tag name
-        id: get_tag
-        run: |
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "当前标签: $TAG_NAME"
-      
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      
+      - name: Generate Dynamic Tag Name
+        id: get_tag
+        run: |
+          # 智能标签生成逻辑：如果是 Tag 触发则使用原 Tag，如果是 push 触发则生成时间戳 Tag
+          if [[ $GITHUB_REF == refs/tags/* ]]; then
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          else
+            TAG_NAME=v2.6-$(date +'%Y%m%d%H%M%S')
+          fi
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "当前使用的标签名称: $TAG_NAME"
       
       - name: Check if source file exists
         run: |
@@ -33,29 +39,25 @@ jobs:
             echo "错误：在项目根目录未找到 '少年你相信光吗' 文件。"
             exit 1
           fi
-          echo "成功找到源文件 '少年你相信光吗'"
+          echo "成功找到加密源文件 '少年你相信光吗'"
       
-      - name: Rename file to _worker.js
+      - name: Rename file and Zip
         run: |
           cp "少年你相信光吗" "_worker.js"
-          echo "成功将 '少年你相信光吗' 复制为 '_worker.js'"
-      
-      - name: Create zip file
-        run: |
           zip Pages.zip _worker.js
-          echo "成功压缩为 'Pages.zip'"
+          echo "成功将 '_worker.js' 压缩为 'Pages.zip'"
       
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.get_tag.outputs.tag_name }}
-          name: Release ${{ steps.get_tag.outputs.tag_name }}
+          name: CFnew-Release ${{ steps.get_tag.outputs.tag_name }}
           body: |
-            ## 部署信息
+            ## 🚀 自动部署发布 (Auto Deploy)
             
-            - **打包产物**: `Pages.zip` (内部包含混淆后的 `_worker.js`)
-            - **部署标签**: ${{ steps.get_tag.outputs.tag_name }}
-            - **自动构建**: 包含最新反风控混淆与毛玻璃 UI。
+            - **打包产物**: `Pages.zip` (内部包含混淆加密后的 `_worker.js`)
+            - **自动标签**: ${{ steps.get_tag.outputs.tag_name }}
+            - **核心更新**: 专属订阅转换源 (`sublink.iwrt.pp.ua`) 与防查杀混淆更新。
           draft: false
           prerelease: false
           files: Pages.zip
