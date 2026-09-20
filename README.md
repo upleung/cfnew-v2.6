@@ -1,4 +1,4 @@
-# CFnew - 终端 v2.2
+# CFnew - 终端 v2.6
 
 <div align="center" style="margin-bottom: 20px;">
 
@@ -8,84 +8,30 @@
 
 <div align="center">
 
-**多协议支持 · 自定义路径 · 代码混淆增强**
+**多协议支持 · 深度毛玻璃UI重构 · 代码混淆增强**
 
 [![Telegram](https://img.shields.io/badge/Telegram-交流群-blue?logo=telegram)](https://t.me/+ft-zI76oovgwNmRh)
-[![Version](https://img.shields.io/badge/Version-2.1-green)]()
+[![Version](https://img.shields.io/badge/Version-2.6-green)]()
 [![License](https://img.shields.io/badge/License-MIT-orange)]()
 
 </div>
 
-## ✨ v2.1 核心特性
+## ✨ v2.6 核心特性
 
 - 🎭 **多协议支持** - VLESS + Trojan + xhttp，自由切换
 - 🛤️ **自定义路径** - 告别UUID路径，自定义访问地址，支持多级路径
-- 🔐 **代码混淆** - 关键词编码，特征隐藏，安全增强
-- 🔄 **订阅转换** - 自定义转换服务，优选类型细粒度控制
-- 🎯 **图形化管理** - KV存储，实时配置，无需重新部署
-- 🚀 **API管理** - RESTful API，批量操作，动态更新
-- 📱 **多客户端支持** - CLASH、SURGE、SING-BOX、LOON、QUANTUMULT X、V2RAY、Shadowrocket、STASH、NEKORAY、V2RAYNG
-- 🚀 **应用唤醒** - 点击按钮自动唤醒对应客户端应用
-- 🔍 **自动识别** - 根据User-Agent自动识别并返回对应格式
-- 🌐 **多语言支持** - 支持中文和波斯语（伊朗语），根据浏览器语言自动切换
+- 🔐 **防查杀级别混淆** - `atob()` 动态加载检测正则表达式，防 CF 风控识别
+- 🔄 **私有订阅转换** - 默认集成专属 `sublink.iwrt.pp.ua` 转换服务 
+- 🎯 **全局毛玻璃 UI** - 基于 CasaOS 桌面级 4K 壁纸玻璃卡片特效，大幅节省系统开销
 
----
-
-## 🆕 v2.1 更新内容
-
-- ✨ 新增 Shadowrocket、STASH、NEKORAY、V2RAYNG 客户端支持
-- ✨ 新增应用自动唤醒功能，一键打开客户端
-- ✨ 新增自动识别功能，智能返回客户端格式
-- ✨ 优化自定义路径，支持多级路径（如 `/path/to/sub`）
-- ✨ 完善 ALPN 配置，所有 TLS 链接自动包含 `h3,h2,http/1.1`
-- ✨ 新增协议配置独立保存按钮，更便捷的配置管理
-- 🌐 新增波斯语（伊朗语）翻译支持，根据浏览器语言自动切换
-- 🔧 修复路径处理逻辑，自动补全开头斜杠
-
----
-
-### 配套工具
-
-| 类型 | 描述 | 链接 |
-| :--- | :--- | :--- |
-|  **优选工具** | 根据自己的网络环境选择最适合的IP | https://github.com/byJoey/yx-tools/releases |
-|  **文字教程** | 详细的部署与使用说明博客文章 | [https://joeyblog.net/yuanchuang/1146.html](https://joeyblog.net/yuanchuang/1146.html) |
-|  **Workers视频教程** | 直观的操作演示和功能讲解 | https://www.youtube.com/watch?v=aYzTr8FafN4 |
-|  **Pages视频教程** | 直观的操作演示和功能讲解 | https://www.youtube.com/watch?v=JhVxJChDL-E |
-|  **Snippets视频教程** | 直观的操作演示和功能讲解 | https://www.youtube.com/watch?v=xeFeH3Akcu8 |
-
-### 部署
-
-加入了千呼万唤的订阅每15分钟自动优选一次
-
-#### 🔧 基础配置
-| 变量名 | 值 | 说明 |
-| :--- | :--- | :--- |
-| `u` | `你的 UUID` | **必需**。用于访问订阅和配置管理界面 |
-| `p` | `proxyip` | **可选**。自定义ProxyIP地址和端口 |
-| `s` | `你的SOCKS5地址` | **可选**。用于将所有出站流量通过 SOCKS5 代理转发，格式为 `user:pass@host:port` 或 `host:port` |
-| `d` | `自定义路径` | **可选**。自定义订阅访问路径，支持多级路径，如 `/mypath` 或 `/path/to/sub`，不填则使用 UUID 路径。如果路径没有以 `/` 开头，会自动补上 |
-| `wk` | `地区代码` | **可选**。手动指定Worker地区，如：`SG`、`HK`、`US`、`JP`等 |
-
-#### 🎭 协议配置（新增）
-| 变量名 | 值 | 说明 |
-| :--- | :--- | :--- |
-| `ev` | `yes/no` | **可选**。启用VLESS协议（默认启用） |
-| `et` | `yes/no` | **可选**。启用Trojan协议（默认禁用） |
-| `ex` | `yes/no` | **可选**。启用xhttp协议（默认禁用） |
-| `tp` | `自定义密码` | **可选**。Trojan协议密码，留空则使用UUID |
-
-#### 🎯 图形化配置（推荐）
-- **KV存储配置**：在Workers中创建KV命名空间，绑定环境变量 `C`
-- **访问界面**：部署后访问 `/{你的UUID}` 即可使用图形化配置管理
-- **实时生效**：通过界面修改配置无需重新部署，立即生效
+...
 
 #### 🔧 高级控制
 | 变量名 | 值 | 说明 |
 | :--- | :--- | :--- |
 | `yx` | `自定义优选IP/域名` | **可选**。支持节点命名，格式：`1.1.1.1:443#香港节点,8.8.8.8:53#Google DNS` |
 | `yxURL` | `优选IP来源URL` | **可选**。自定义优选IP列表来源URL，留空则使用默认地址 |
-| `scu` | `订阅转换地址` | **可选**。自定义订阅转换服务URL，默认：`https://url.v1.mk/sub` |
+| `scu` | `订阅转换地址` | **可选**。自定义订阅转换服务URL，默认已变更为：`https://sublink.iwrt.pp.ua` |
 | `epd` | `yes/no` | **可选**。启用优选域名（默认启用） |
 | `epi` | `yes/no` | **可选**。启用优选IP（默认启用） |
 | `egi` | `yes/no` | **可选**。启用GitHub默认优选（默认启用） |
