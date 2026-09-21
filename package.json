@@ -1,0 +1,16 @@
+{
+  "name": "cf-new-v2.7-fixed-pages",
+  "version": "2.7.0",
+  "private": true,
+  "description": "CF-New v2.7-fixed Cloudflare Pages Advanced Worker build and release project",
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "javascript-obfuscator": "5.7.0"
+  },
+  "scripts": {
+    "build:obfuscate": "node scripts/build-release.mjs",
+    "test": "node scripts/validate.mjs"
+  }
+}

@@ -1,91 +1,149 @@
-name: Generate and Obfuscate Worker Script
+name: Obfuscate Build and Release Pages
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '可选：指定 Release Tag，例如 v2.7.0；留空则自动生成时间戳 Tag'
+        required: false
+        default: ''
   push:
     branches:
       - main
       - master
+    tags:
+      - 'v*'
     paths:
       - '明文源吗'
+      - 'scripts/**'
+      - 'worker/**'
+      - 'wrangler.toml'
+
+concurrency:
+  group: cfnew-pages-release-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
 
+env:
+  NODE_VERSION: '24'
+  OBFUSCATOR_VERSION: '5.7.0'
+  RELEASE_PREFIX: 'v2.7'
+
 jobs:
-  build-and-obfuscate:
+  build-and-release:
+    name: Obfuscate → Verify → Pages.zip → GitHub Release
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Checkout source
+        uses: actions/checkout@v7
         with:
-          node-version: '18'
+          fetch-depth: 0
 
-      - name: Install Obfuscator
-        run: npm install javascript-obfuscator
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          check-latest: false
+          package-manager-cache: false
 
-      - name: Obfuscate from local source file
+      - name: Show build environment
         run: |
-          cat > obfuscate.js << 'EOF'
-          const JavaScriptObfuscator = require('javascript-obfuscator');
-          const fs = require('fs');
-          const path = require('path');
-          
-          const sourceFileName = '明文源吗';
-          const outputFileName = '少年你相信光吗';
-          const sourceFilePath = path.join(process.cwd(), sourceFileName);
+          node --version
+          npm --version
+          git --version
 
-          if (!fs.existsSync(sourceFilePath)) {
-            console.error('错误：未找到源文件。');
-            process.exit(1);
-          }
-
-          const originalCode = fs.readFileSync(sourceFilePath, 'utf8');
-
-          if (!originalCode || originalCode.trim().length === 0) {
-            console.error('错误：源文件为空。');
-            process.exit(1);
-          }
-
-          const obfuscationOptions = {
-              compact: true,
-              controlFlowFlattening: false,
-              controlFlowFlatteningThreshold: 0,
-              deadCodeInjection: false,
-              stringArray: true,
-              stringArrayEncoding: ['base64'],
-              stringArrayThreshold: 1.0,
-              stringArrayRotate: true,
-              stringArrayShuffle: true,
-              stringArrayWrappersCount: 2,
-              renameGlobals: true,
-              identifierNamesGenerator: 'mangled-shuffled',
-              renameProperties: false,
-              target: 'browser',
-              splitStrings: true,
-              splitStringsChunkLength: 1,
-              unicodeEscapeSequence: true,
-              disableConsoleOutput: true
-          };
-
-          const obfuscatedCode = JavaScriptObfuscator.obfuscate(originalCode, obfuscationOptions).getObfuscatedCode();
-          fs.writeFileSync(path.join(process.cwd(), outputFileName), obfuscatedCode, 'utf8');
-          console.log('成功将 \'' + sourceFileName + '\' 混淆并保存至 \'' + outputFileName + '\'。');
-          EOF
-          node obfuscate.js
-
-      - name: Commit and push the obfuscated file
+      - name: Install exact obfuscator version
         run: |
-          git config --global user.name 'GitHub Actions Bot'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add '少年你相信光吗'
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
+          npm install --no-save --no-package-lock --ignore-scripts "javascript-obfuscator@${OBFUSCATOR_VERSION}"
+          node -e "console.log('javascript-obfuscator', require('javascript-obfuscator/package.json').version)"
+
+      - name: Obfuscate source → dist/_worker.js
+        run: node scripts/build-release.mjs
+
+      - name: Verify source and obfuscated Worker syntax
+        run: |
+          node scripts/validate.mjs
+
+      - name: Prepare Cloudflare Pages package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf release
+          mkdir -p release/pages
+          cp dist/_worker.js release/pages/_worker.js
+
+          # Pages.zip 内只放最终 _worker.js，避免把源码、脚本或配置误上传到 Pages。
+          cd release/pages
+          zip -9 ../../Pages.zip _worker.js
+          cd ../..
+
+          # 验证压缩包结构和内容完整性。
+          unzip -t Pages.zip
+          unzip -p Pages.zip _worker.js > /tmp/pages-worker.js
+          cmp --silent /tmp/pages-worker.js dist/_worker.js
+
+          sha256sum Pages.zip > SHA256SUMS
+          sha256sum dist/_worker.js >> SHA256SUMS
+
+          echo '--- Pages.zip ---'
+          ls -lh Pages.zip
+          unzip -l Pages.zip
+          echo '--- SHA256SUMS ---'
+          cat SHA256SUMS
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        env:
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${INPUT_RELEASE_TAG:-}" ]]; then
+            TAG_NAME="$INPUT_RELEASE_TAG"
+          elif [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG_NAME="${GITHUB_REF_NAME}"
           else
-            git commit -m "chore: auto-obfuscate source code"
-            git push
+            TAG_NAME="${RELEASE_PREFIX}-$(date -u +'%Y%m%d-%H%M%S')-${GITHUB_RUN_NUMBER}"
           fi
+
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+ ]]; then
+            echo "Invalid release tag: $TAG_NAME"
+            exit 1
+          fi
+
+          echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG_NAME"
+
+      - name: Create GitHub Release and upload Pages.zip
+        uses: softprops/action-gh-release@v3
+        with:
+          token: ${{ github.token }}
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          target_commitish: ${{ github.sha }}
+          name: CF-New ${{ steps.release.outputs.tag_name }}
+          body: |
+            ## CF-New Pages Release
+
+            - Build: `${{ github.sha }}`
+            - Obfuscator: `javascript-obfuscator@${{ env.OBFUSCATOR_VERSION }}`
+            - Runtime: Node.js `${{ env.NODE_VERSION }}`
+            - Pages artifact: `Pages.zip`
+            - SHA-256: `SHA256SUMS`
+            - `Pages.zip` 内部仅包含最终混淆后的 `_worker.js`
+
+            ### 部署
+            将 `Pages.zip` 解压后，把 `_worker.js` 作为 Cloudflare Pages Advanced Mode 的 Worker 文件部署。
+          files: |
+            Pages.zip
+            SHA256SUMS
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          preserve_order: true
+          make_latest: true

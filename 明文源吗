@@ -1,691 +1,890 @@
+// CF-New v2.7 — Cloudflare Pages Advanced Worker
+// 目标：修复 VLESS/WS 首包与连接竞速、路径映射、fallback、80/443 节点、KV 配置与 Glass UI。
+// 兼容：Cloudflare Workers / Pages Advanced Mode
+
 import { connect } from 'cloudflare:sockets';
 
-let at = '5db39503-8fa8-4fcb-806c-10dfbab23952';
-let fallbackAddress = '';
-let fallbackPort = '443';
-let socks5Config = '';
-let customPreferredIPs = [];
-let customPreferredDomains = [];
-let enableSocksDowngrade = false;
-let disableNonTLS = false; // 默认保留 80 端口
-let disablePreferred = false;
+const VERSION = 'CF-New v2.7-fixed';
+const DEFAULT_UUID = '5db39503-8fa8-4fcb-806c-10dfbab23952';
+const DEFAULT_SUB_CONVERTER = 'https://sublink.iwrt.pp.ua';
+const WS_PATH_QUERY = 'ed=2048';
+const FIRST_BYTE_TIMEOUT_MS = 3500;
+const MAX_UPLOAD_QUEUE = 512 * 1024;
+const MAX_INITIAL_BUFFER = 64 * 1024;
 
-let enableRegionMatching = true;
-let currentWorkerRegion = '';
-let manualWorkerRegion = '';
-let piu = '';
-let cp = '';  
+// 需求文档要求的 CF fallback 绕路入口。
+// 这是 hostname 而不是 literal IP；它用于 Worker -> ProxyIP 的备用出站连接。
+const CF_FALLBACK_IPS = ['ProxyIP.CMLiussss.net'];
 
-let ev = true;   
-let et = false; 
-let ex = false;  
-let tp = '';  
-
-// [已替换] 您的专属订阅转换后端
-let scu = 'https://sublink.iwrt.pp.ua';  
-const remoteConfigUrl = 'https://raw.githubusercontent.com/byJoey/test/refs/heads/main/tist.ini';
-
-// [修复点 1] 默认强制开启优选域名与优选 IP，杜绝只出 1 个节点的问题
-let epd = true;   
-let epi = true;       
-let egi = true;          
-
-let kvStore = null;
-let kvConfig = {};
-
-// [修复点 2] 完整扩容落地地区：支持德国、瑞典、荷兰、芬兰、英国等
-const regionMapping = {
-    'US': ['🇺🇸 美国', 'US', 'United States'],
-    'SG': ['🇸🇬 新加坡', 'SG', 'Singapore'],
-    'JP': ['🇯🇵 日本', 'JP', 'Japan'],
-    'HK': ['🇭🇰 香港', 'HK', 'Hong Kong'],
-    'TW': ['🇹🇼 台湾', 'TW', 'Taiwan'],
-    'KR': ['🇰🇷 韩国', 'KR', 'South Korea'],
-    'DE': ['🇩🇪 德国', 'DE', 'Germany'],
-    'SE': ['🇸🇪 瑞典', 'SE', 'Sweden'],
-    'NL': ['🇳🇱 荷兰', 'NL', 'Netherlands'],
-    'FI': ['🇫🇮 芬兰', 'FI', 'Finland'],
-    'GB': ['🇬🇧 英国', 'GB', 'United Kingdom'],
-    'FR': ['🇫🇷 法国', 'FR', 'France'],
-    'AU': ['🇦🇺 澳大利亚', 'AU', 'Australia'],
-    'CA': ['🇨🇦 加拿大', 'CA', 'Canada'],
-    'Oracle': ['甲骨文', 'Oracle'],
-    'DigitalOcean': ['数码海', 'DigitalOcean'],
-    'Vultr': ['Vultr', 'Vultr'],
-    'Multacom': ['Multacom', 'Multacom']
+const REGION_MAPPING = {
+  US: ['🇺🇸 美国', 'US', 'United States'],
+  SG: ['🇸🇬 新加坡', 'SG', 'Singapore'],
+  JP: ['🇯🇵 日本', 'JP', 'Japan'],
+  HK: ['🇭🇰 香港', 'HK', 'Hong Kong'],
+  TW: ['🇹🇼 台湾', 'TW', 'Taiwan'],
+  KR: ['🇰🇷 韩国', 'KR', 'South Korea'],
+  DE: ['🇩🇪 德国', 'DE', 'Germany'],
+  SE: ['🇸🇪 瑞典', 'SE', 'Sweden'],
+  NL: ['🇳🇱 荷兰', 'NL', 'Netherlands'],
+  FI: ['🇫🇮 芬兰', 'FI', 'Finland'],
+  GB: ['🇬🇧 英国', 'GB', 'United Kingdom'],
+  FR: ['🇫🇷 法国', 'FR', 'France'],
+  AU: ['🇦🇺 澳大利亚', 'AU', 'Australia'],
+  CA: ['🇨🇦 加拿大', 'CA', 'Canada'],
+  Oracle: ['甲骨文', 'Oracle', 'Oracle'],
+  DigitalOcean: ['数码海', 'DigitalOcean', 'DigitalOcean'],
+  Vultr: ['Vultr', 'Vultr', 'Vultr'],
+  Multacom: ['Multacom', 'Multacom', 'Multacom']
 };
 
-let backupIPs = [
-    { domain: 'ProxyIP.US.CMLiussss.net', region: 'US', regionCode: 'US', port: 443 },
-    { domain: 'ProxyIP.SG.CMLiussss.net', region: 'SG', regionCode: 'SG', port: 443 },
-    { domain: 'ProxyIP.JP.CMLiussss.net', region: 'JP', regionCode: 'JP', port: 443 },
-    { domain: 'ProxyIP.HK.CMLiussss.net', region: 'HK', regionCode: 'HK', port: 443 },
-    { domain: 'ProxyIP.KR.CMLiussss.net', region: 'KR', regionCode: 'KR', port: 443 },
-    { domain: 'ProxyIP.DE.CMLiussss.net', region: 'DE', regionCode: 'DE', port: 443 },
-    { domain: 'ProxyIP.SE.CMLiussss.net', region: 'SE', regionCode: 'SE', port: 443 },
-    { domain: 'ProxyIP.NL.CMLiussss.net', region: 'NL', regionCode: 'NL', port: 443 },
-    { domain: 'ProxyIP.FI.CMLiussss.net', region: 'FI', regionCode: 'FI', port: 443 },
-    { domain: 'ProxyIP.GB.CMLiussss.net', region: 'GB', regionCode: 'GB', port: 443 }
+// 需求文档中的四个优选域名。
+const DIRECT_DOMAINS = [
+  { name: 'Visa官方-优选', domain: 'visa.com', region: 'US' },
+  { name: 'iCook-台湾极速', domain: 'icook.tw', region: 'TW' },
+  { name: 'Visa新加坡-高速', domain: 'www.visa.com.sg', region: 'SG' },
+  { name: 'CF优选池-090227', domain: 'cf.090227.xyz', region: 'US' }
 ];
 
-// [修复点 3] 必须包含要求的四个优质域名，支持 443 / 80 双端口生成
-const directDomains = [
-    { name: "Visa官方-优选", domain: "visa.com" },
-    { name: "iCook-台湾极速", domain: "icook.tw" }, 
-    { name: "Visa新加坡-高速", domain: "www.visa.com.sg" },
-    { name: "CF优选池-090227", domain: "cf.090227.xyz" }
+// 内置三网示例池。实际“最佳 IP”应以你自己的实测/IP 池更新为准，KV 可完全替换。
+const TRI_NET_IPS = {
+  telecom: [
+    { ip: '104.16.160.1', name: '电信优选-104', region: 'US' },
+    { ip: '162.159.138.1', name: '电信优选-162', region: 'US' },
+    { ip: '172.64.32.1', name: '电信优选-172', region: 'US' }
+  ],
+  unicom: [
+    { ip: '104.17.0.1', name: '联通优选-104', region: 'US' },
+    { ip: '104.20.0.1', name: '联通优选-104B', region: 'US' },
+    { ip: '172.67.0.1', name: '联通优选-172', region: 'US' }
+  ],
+  mobile: [
+    { ip: '104.19.160.1', name: '移动优选-104', region: 'US' },
+    { ip: '162.159.192.1', name: '移动优选-162', region: 'US' },
+    { ip: '172.65.0.1', name: '移动优选-172', region: 'US' }
+  ]
+};
+
+const DEFAULT_FALLBACKS = [
+  { domain: 'ProxyIP.US.CMLiussss.net', regionCode: 'US', port: 443 },
+  { domain: 'ProxyIP.SG.CMLiussss.net', regionCode: 'SG', port: 443 },
+  { domain: 'ProxyIP.JP.CMLiussss.net', regionCode: 'JP', port: 443 },
+  { domain: 'ProxyIP.HK.CMLiussss.net', regionCode: 'HK', port: 443 },
+  { domain: 'ProxyIP.KR.CMLiussss.net', regionCode: 'KR', port: 443 },
+  { domain: 'ProxyIP.DE.CMLiussss.net', regionCode: 'DE', port: 443 },
+  { domain: 'ProxyIP.SE.CMLiussss.net', regionCode: 'SE', port: 443 },
+  { domain: 'ProxyIP.NL.CMLiussss.net', regionCode: 'NL', port: 443 },
+  { domain: 'ProxyIP.FI.CMLiussss.net', regionCode: 'FI', port: 443 },
+  { domain: 'ProxyIP.GB.CMLiussss.net', regionCode: 'GB', port: 443 },
+  { domain: 'ProxyIP.CA.CMLiussss.net', regionCode: 'CA', port: 443 }
 ];
 
-// [修复点 4] 内置中国移动/联通/电信三网高速 Anycast 优选 IP 列表
-const triNetIPs = [
-    // 电信优选 (China Telecom)
-    { ip: '104.16.160.1', isp: '电信优选-104' },
-    { ip: '162.159.138.1', isp: '电信优选-162' },
-    { ip: '172.64.32.1', isp: '电信优选-172' },
-    // 联通优选 (China Unicom)
-    { ip: '104.17.0.1', isp: '联通优选-104' },
-    { ip: '104.20.0.1', isp: '联通优选-104B' },
-    { ip: '172.67.0.1', isp: '联通优选-172' },
-    // 移动优选 (China Mobile)
-    { ip: '104.19.160.1', isp: '移动优选-104' },
-    { ip: '162.159.192.1', isp: '移动优选-162' },
-    { ip: '172.65.0.1', isp: '移动优选-172' }
-];
+const NETWORK_LABELS = {
+  auto: '自动检测',
+  telecom: '中国电信',
+  unicom: '中国联通',
+  mobile: '中国移动',
+  all: '三网通用'
+};
 
-const E_INVALID_DATA = atob('aW52YWxpZCBkYXRh');
-const E_INVALID_USER = atob('aW52YWxpZCB1c2Vy');
-const E_UNSUPPORTED_CMD = atob('Y29tbWFuZCBpcyBub3Qgc3VwcG9ydGVk');
-const E_UDP_DNS_ONLY = atob('VURQIHByb3h5IG9ubHkgZW5hYmxlIGZvciBETlMgd2hpY2ggaXMgcG9ydCA1Mw==');
-const E_INVALID_ADDR_TYPE = atob('aW52YWxpZCBhZGRyZXNzVHlwZQ==');
-const E_EMPTY_ADDR = atob('YWRkcmVzc1ZhbHVlIGlzIGVtcHR5');
-const E_WS_NOT_OPEN = atob('d2ViU29ja2V0LmVhZHlTdGF0ZSBpcyBub3Qgb3Blbg==');
-const E_INVALID_ID_STR = atob('U3RyaW5naWZpZWQgaWRlbnRpZmllciBpcyBpbnZhbGlk');
-const E_INVALID_SOCKS_ADDR = atob('SW52YWxpZCBTT0NLUyBhZGRyZXNzIGZvcm1hdA==');
-const E_SOCKS_NO_METHOD = atob('bm8gYWNjZXB0YWJsZSBtZXRob2Rz');
-const E_SOCKS_AUTH_NEEDED = atob('c29ja3Mgc2VydmVyIG5lZWRzIGF1dGg=');
-const E_SOCKS_AUTH_FAIL = atob('ZmFpbCB0byBhdXRoIHNvY2tzIHNlcnZlcg==');
-const E_SOCKS_CONN_FAIL = atob('ZmFpbCB0byBvcGVuIHNvY2tzIGNvbm5lY3Rpb24=');
+const CF_COUNTRY_REGION = {
+  US: 'US', SG: 'SG', JP: 'JP', HK: 'HK', TW: 'TW', KR: 'KR',
+  DE: 'DE', SE: 'SE', NL: 'NL', FI: 'FI', GB: 'GB', FR: 'FR', AU: 'AU', CA: 'CA',
+  CN: 'HK', IT: 'DE', ES: 'DE', CH: 'DE', AT: 'DE', BE: 'NL', DK: 'SE', NO: 'SE', IE: 'GB'
+};
 
-let parsedSocks5Config = {};
-let isSocksEnabled = false;
+const COMMON_ASN_GROUPS = {
+  telecom: new Set(['4134', '4809', '4812', '23724', '17638']),
+  unicom: new Set(['4837', '9929', '17622']),
+  mobile: new Set(['9808', '56040', '24400'])
+};
 
-const ADDRESS_TYPE_IPV4 = 1;
-const ADDRESS_TYPE_URL = 2;
-const ADDRESS_TYPE_IPV6 = 3;
-
-function isValidFormat(str) {
-    const userRegex = new RegExp(atob('XlswLTlhLWZdezh9LVswLTlhLWZdezR9LVswLTlhLWZdezR9LVswLTlhLWZdezR9LVswLTlhLWZdezEyfSQ='), 'i');
-    return userRegex.test(str);
+function isOn(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (value === true || value === false) return value;
+  return ['yes', 'true', '1', 'on'].includes(String(value).trim().toLowerCase());
 }
 
-function isValidIP(ip) {
-    const ipv4Regex = /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-    if (ipv4Regex.test(ip)) return true;
-    const ipv6Regex = /^(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$/;
-    if (ipv6Regex.test(ip)) return true;
-    const ipv6ShortRegex = /^::1$|^::$\vert{}^(?:[0-9a-fA-F]{1,4}:)*::(?:[0-9a-fA-F]{1,4}:)*[0-9a-fA-F]{1,4}$/;
-    if (ipv6ShortRegex.test(ip)) return true;
-    return false;
+function text(value, fallback = '') {
+  if (value === undefined || value === null) return fallback;
+  return String(value);
 }
 
-async function initKVStore(env) {
-    if (env.C) {
-        try { kvStore = env.C; await loadKVConfig(); } catch (error) { kvStore = null; }
+function normalizeBool(value, fallback = false) {
+  return isOn(value, fallback) ? 'yes' : 'no';
+}
+
+function normalizePath(path) {
+  const raw = text(path).trim();
+  if (!raw) return '';
+  const withSlash = raw.startsWith('/') ? raw : `/${raw}`;
+  return withSlash.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
+}
+
+function stripPath(pathname) {
+  const clean = text(pathname).replace(/\/{2,}/g, '/');
+  return clean.endsWith('/') && clean.length > 1 ? clean.slice(0, -1) : clean;
+}
+
+function sanitizeNodeName(name) {
+  return text(name, 'CF-New').replace(/[\r\n#]/g, '_').trim() || 'CF-New';
+}
+
+function toUint8Array(data) {
+  if (data instanceof Uint8Array) return data;
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+  if (typeof data === 'string') return new TextEncoder().encode(data);
+  return new Uint8Array(data);
+}
+
+function concatBytes(a, b) {
+  const left = toUint8Array(a);
+  const right = toUint8Array(b);
+  const out = new Uint8Array(left.byteLength + right.byteLength);
+  out.set(left, 0);
+  out.set(right, left.byteLength);
+  return out;
+}
+
+function uuidToBytes(uuid) {
+  const hex = text(uuid).replace(/-/g, '');
+  if (hex.length !== 32 || !/^[0-9a-f]+$/i.test(hex)) return null;
+  const out = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function bytesEqual(a, b) {
+  if (!a || !b || a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+function isValidUuid(uuid) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text(uuid));
+}
+
+function parseAddressAndPort(input, defaultPort = null) {
+  const raw = text(input).trim();
+  if (!raw) return { address: '', port: defaultPort };
+  if (raw.startsWith('[')) {
+    const match = raw.match(/^\[([^\]]+)\](?::(\d+))?$/);
+    if (match) return { address: match[1], port: match[2] ? Number(match[2]) : defaultPort };
+  }
+  const lastColon = raw.lastIndexOf(':');
+  if (lastColon > 0 && raw.indexOf(':') === lastColon) {
+    const candidatePort = Number(raw.slice(lastColon + 1));
+    if (candidatePort > 0 && candidatePort <= 65535) return { address: raw.slice(0, lastColon), port: candidatePort };
+  }
+  return { address: raw, port: defaultPort };
+}
+
+function normalizeHostForUri(address) {
+  const raw = text(address).trim();
+  return raw.includes(':') && !raw.startsWith('[') ? `[${raw}]` : raw;
+}
+
+function detectRegion(request, config) {
+  if (config.wk) return text(config.wk).trim().toUpperCase();
+  const country = request.cf?.country;
+  return CF_COUNTRY_REGION[country] || 'SG';
+}
+
+function detectNetwork(request, config, requested = '') {
+  const forced = text(requested || config.network || '').trim().toLowerCase();
+  if (['telecom', 'unicom', 'mobile', 'all'].includes(forced)) return forced;
+  if (forced === 'auto' || !forced) {
+    const asn = text(request.cf?.asn);
+    for (const [network, values] of Object.entries(COMMON_ASN_GROUPS)) {
+      if (values.has(asn)) return network;
     }
-}
-
-async function loadKVConfig() {
-    if (!kvStore) return;
-    try {
-        const configData = await kvStore.get('c');
-        if (configData) kvConfig = JSON.parse(configData);
-    } catch (error) { kvConfig = {}; }
-}
-
-async function saveKVConfig() {
-    if (!kvStore) return;
-    try { await kvStore.put('c', JSON.stringify(kvConfig)); } catch (error) { throw error; }
-}
-
-function getConfigValue(key, defaultValue = '') {
-    return kvConfig[key] !== undefined ? kvConfig[key] : defaultValue;
-}
-
-async function setConfigValue(key, value) {
-    kvConfig[key] = value;
-    await saveKVConfig();
-}
-
-async function detectWorkerRegion(request) {
-    try {
-        const cfCountry = request.cf?.country;
-        if (cfCountry) {
-            const countryToRegion = {
-                'US': 'US', 'SG': 'SG', 'JP': 'JP', 'HK': 'HK', 'TW': 'TW', 'KR': 'KR',
-                'DE': 'DE', 'SE': 'SE', 'NL': 'NL', 'FI': 'FI', 'GB': 'GB',
-                'CN': 'HK', 'AU': 'AU', 'CA': 'CA',
-                'FR': 'FR', 'IT': 'IT', 'ES': 'DE', 'CH': 'DE',
-                'AT': 'DE', 'BE': 'NL', 'DK': 'SE', 'NO': 'SE', 'IE': 'GB'
-            };
-            if (countryToRegion[cfCountry]) return countryToRegion[cfCountry];
-        }
-        return 'SG';
-    } catch (error) { return 'SG'; }
-}
-
-async function getBestBackupIP(workerRegion = '') {
-    if (backupIPs.length === 0) return null;
-    const availableIPs = backupIPs.map(ip => ({ ...ip, available: true }));
-    if (enableRegionMatching && workerRegion) {
-        const sortedIPs = getSmartRegionSelection(workerRegion, availableIPs);
-        if (sortedIPs.length > 0) return sortedIPs[0];
-    }
-    return availableIPs[0];
+  }
+  return 'all';
 }
 
 function getNearbyRegions(region) {
-    const nearbyMap = {
-        'US': ['CA', 'SG', 'JP', 'HK'], 'SG': ['HK', 'TW', 'JP', 'AU'], 'JP': ['KR', 'TW', 'HK', 'SG'], 
-        'HK': ['TW', 'SG', 'JP', 'KR'], 'TW': ['HK', 'JP', 'SG', 'KR'], 'KR': ['JP', 'TW', 'HK', 'SG'], 
-        'DE': ['NL', 'SE', 'FI', 'GB', 'FR'], 'SE': ['FI', 'DE', 'NL', 'GB'], 'NL': ['DE', 'GB', 'SE', 'FI'],
-        'FI': ['SE', 'DE', 'NL', 'GB'], 'GB': ['NL', 'DE', 'FR', 'SE'], 'AU': ['SG', 'HK', 'JP'], 'CA': ['US']
+  const map = {
+    US: ['CA', 'SG', 'JP', 'HK'], SG: ['HK', 'TW', 'JP', 'AU'], JP: ['KR', 'TW', 'HK', 'SG'],
+    HK: ['TW', 'SG', 'JP', 'KR'], TW: ['HK', 'JP', 'SG', 'KR'], KR: ['JP', 'TW', 'HK', 'SG'],
+    DE: ['NL', 'SE', 'FI', 'GB', 'FR'], SE: ['FI', 'DE', 'NL', 'GB'], NL: ['DE', 'GB', 'SE', 'FI'],
+    FI: ['SE', 'DE', 'NL', 'GB'], GB: ['NL', 'DE', 'FR', 'SE'], AU: ['SG', 'HK', 'JP'], CA: ['US']
+  };
+  return map[region] || [];
+}
+
+function loadDefaults() {
+  return {
+    wk: '',
+    network: 'auto',
+    ev: 'yes',
+    et: 'no',
+    ex: 'no',
+    d: '',
+    p: '',
+    rm: 'yes',
+    epd: 'yes',
+    epi: 'yes',
+    egi: 'yes',
+    scu: DEFAULT_SUB_CONVERTER
+  };
+}
+
+function readEnvConfig(env) {
+  const get = (...names) => names.map(n => env?.[n]).find(v => v !== undefined && v !== null && v !== '');
+  const cfg = loadDefaults();
+  const map = {
+    wk: ['wk', 'WK'], network: ['network', 'NETWORK', 'networkType', 'NETWORK_TYPE'],
+    ev: ['ev', 'EV'], et: ['et', 'ET'], ex: ['ex', 'EX'], d: ['d', 'D'], p: ['p', 'P'],
+    rm: ['rm', 'RM'], epd: ['epd', 'EPD'], epi: ['epi', 'EPI'], egi: ['egi', 'EGI'], scu: ['scu', 'SCU']
+  };
+  for (const [key, names] of Object.entries(map)) {
+    const value = get(...names);
+    if (value !== undefined) cfg[key] = text(value);
+  }
+  return cfg;
+}
+
+async function getKVBindings(env) {
+  return {
+    config: env?.CFNEW_CONFIG || env?.C || null,
+    ipPool: env?.CFNEW_IP_POOL || null,
+    fallback: env?.CFNEW_FALLBACK || null,
+    network: env?.CFNEW_NETWORK_TYPE || null
+  };
+}
+
+async function readJsonOrText(kv, keys) {
+  if (!kv) return null;
+  for (const key of keys) {
+    try {
+      const value = await kv.get(key);
+      if (value) {
+        try { return JSON.parse(value); } catch { return value; }
+      }
+    } catch (_) {}
+  }
+  return null;
+}
+
+async function loadConfig(env) {
+  const base = readEnvConfig(env);
+  const bindings = await getKVBindings(env);
+  const stored = await readJsonOrText(bindings.config, ['config', 'c']);
+  if (stored && typeof stored === 'object' && !Array.isArray(stored)) Object.assign(base, stored);
+  base.d = normalizePath(base.d);
+  base.wk = text(base.wk).trim().toUpperCase();
+  base.network = text(base.network || 'auto').trim().toLowerCase();
+  base.rm = normalizeBool(base.rm, true);
+  base.ev = normalizeBool(base.ev, true);
+  base.et = normalizeBool(base.et, false);
+  base.ex = normalizeBool(base.ex, false);
+  base.epd = normalizeBool(base.epd, true);
+  base.epi = normalizeBool(base.epi, true);
+  base.egi = normalizeBool(base.egi, true);
+  base.scu = text(base.scu, DEFAULT_SUB_CONVERTER);
+  if (base.ev === 'no' && base.et === 'no' && base.ex === 'no') base.ev = 'yes';
+  return { config: base, bindings };
+}
+
+async function saveUiConfig(env, patch) {
+  const bindings = await getKVBindings(env);
+  if (!bindings.config) throw new Error('CFNEW_CONFIG / C KV binding is not configured');
+  const existing = await readJsonOrText(bindings.config, ['config', 'c']);
+  const current = existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {};
+  const next = { ...current };
+  if (patch.wk !== undefined) next.wk = text(patch.wk).trim().toUpperCase();
+  if (patch.network !== undefined) next.network = text(patch.network).trim().toLowerCase();
+  await bindings.config.put('config', JSON.stringify(next));
+  // 保留旧版 C/c 的兼容读取：新配置不需要同时写两份。
+  return next;
+}
+
+function parsePoolText(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'object') return value.list || value.ips || [];
+  return String(value).split(/\r?\n|,/).map(line => line.trim()).filter(Boolean).map(line => {
+    const [first, ...nameParts] = line.split('#');
+    const parsed = parseAddressAndPort(first, 443);
+    return {
+      ip: parsed.address,
+      port: parsed.port || 443,
+      name: nameParts.join('#').trim() || parsed.address,
+      region: ''
     };
-    return nearbyMap[region] || [];
+  });
 }
 
-function getAllRegionsByPriority(region) {
-    const nearbyRegions = getNearbyRegions(region);
-    const allRegions = Object.keys(regionMapping);
-    return [region, ...nearbyRegions, ...allRegions.filter(r => r !== region && !nearbyRegions.includes(r))];
+async function loadIpPool(env, network) {
+  const bindings = await getKVBindings(env);
+  const stored = await readJsonOrText(bindings.ipPool, ['list', 'ips', 'ip_pool']);
+  const parsed = parsePoolText(stored);
+  if (parsed.length) return parsed.map((item, i) => ({
+    ip: text(item.ip || item.domain || item.address),
+    port: Number(item.port) > 0 ? Number(item.port) : 443,
+    name: sanitizeNodeName(item.name || item.isp || `优选-${i + 1}`),
+    region: text(item.region || item.regionCode || 'US').toUpperCase(),
+    network: text(item.network || '').toLowerCase()
+  })).filter(item => item.ip);
+
+  const ordered = network === 'telecom' ? TRI_NET_IPS.telecom : network === 'unicom' ? TRI_NET_IPS.unicom : network === 'mobile' ? TRI_NET_IPS.mobile : [
+    ...TRI_NET_IPS.telecom, ...TRI_NET_IPS.unicom, ...TRI_NET_IPS.mobile
+  ];
+  return ordered.map(item => ({ ip: item.ip, port: 443, name: item.name, region: item.region, network: '' }));
 }
 
-function getSmartRegionSelection(workerRegion, availableIPs) {
-    if (!enableRegionMatching || !workerRegion) return availableIPs;
-    const priorityRegions = getAllRegionsByPriority(workerRegion);
-    const sortedIPs = [];
-    for (const region of priorityRegions) {
-        const regionIPs = availableIPs.filter(ip => ip.regionCode === region);
-        sortedIPs.push(...regionIPs);
-    }
-    return sortedIPs;
+async function loadFallbacks(env) {
+  const bindings = await getKVBindings(env);
+  const stored = await readJsonOrText(bindings.fallback, ['list', 'fallback', 'ips']);
+  const parsed = parsePoolText(stored);
+  if (!parsed.length) return DEFAULT_FALLBACKS;
+  return parsed.map(item => ({
+    domain: text(item.domain || item.ip || item.address),
+    regionCode: text(item.regionCode || item.region || '').toUpperCase(),
+    port: Number(item.port) > 0 ? Number(item.port) : 443
+  })).filter(item => item.domain);
 }
 
-function parseAddressAndPort(input) {
-    if (input.includes('[') && input.includes(']')) {
-        const match = input.match(/^\[([^\]]+)\](?::(\d+))?$/);
-        if (match) return { address: match[1], port: match[2] ? parseInt(match[2], 10) : null };
+function orderFallbacks(fallbacks, region, regionMatch = true, manualFallback = '') {
+  const result = [];
+  const add = (domain, port) => {
+    const key = `${domain}:${port}`;
+    if (!result.some(x => `${x.domain}:${x.port}` === key)) result.push({ domain, port });
+  };
+  if (manualFallback) {
+    const parsed = parseAddressAndPort(manualFallback, 443);
+    if (parsed.address) add(parsed.address, parsed.port || 443);
+  }
+  // 需求文档指定的全局 fallback 兜底第一优先级。
+  for (const host of CF_FALLBACK_IPS) add(host, 443);
+
+  const list = Array.isArray(fallbacks) ? fallbacks : [];
+  if (regionMatch && region) {
+    for (const r of [region, ...getNearbyRegions(region)]) {
+      for (const item of list.filter(v => v.regionCode === r)) add(item.domain, item.port || 443);
     }
-    const lastColonIndex = input.lastIndexOf(':');
-    if (lastColonIndex > 0) {
-        const address = input.substring(0, lastColonIndex);
-        const port = parseInt(input.substring(lastColonIndex + 1), 10);
-        if (!isNaN(port) && port > 0 && port <= 65535) return { address, port };
+  }
+  for (const item of list) add(item.domain, item.port || 443);
+  return result.slice(0, 6);
+}
+
+function makeWsPath(basePath, network = 'all', extra = {}) {
+  const path = basePath || '/';
+  const params = new URLSearchParams({ [WS_PATH_QUERY.split('=')[0]]: WS_PATH_QUERY.split('=')[1] });
+  if (network && network !== 'all') params.set('nt', network);
+  if (extra.rm === false) params.set('rm', 'no');
+  if (extra.p) params.set('p', extra.p);
+  return `${path}?${params.toString()}`;
+}
+
+function makeVlessLink({ server, port, tls, uuid, workerDomain, wsPath, name }) {
+  const safeAddress = normalizeHostForUri(server);
+  const params = new URLSearchParams({
+    encryption: 'none',
+    security: tls ? 'tls' : 'none',
+    type: 'ws',
+    host: workerDomain,
+    path: wsPath
+  });
+  if (tls) {
+    params.set('sni', workerDomain);
+    params.set('fp', 'chrome');
+  }
+  return `vless://${uuid}@${safeAddress}:${port}?${params.toString()}#${encodeURIComponent(sanitizeNodeName(name))}`;
+}
+
+async function generateSubscription(request, env, uuid, url, cfg) {
+  const workerDomain = url.hostname;
+  const basePath = cfg.d || `/${uuid}`;
+  const network = detectNetwork(request, cfg, url.searchParams.get('network') || url.searchParams.get('nt') || cfg.network);
+  const region = detectRegion(request, cfg);
+  const regionMatch = cfg.rm !== 'no';
+  const links = [];
+  const wsPath = makeWsPath(basePath, network, { rm: !regionMatch, p: cfg.p });
+
+  if (isOn(cfg.epd, true)) {
+    for (const item of DIRECT_DOMAINS) {
+      links.push(makeVlessLink({ server: item.domain, port: 443, tls: true, uuid, workerDomain, wsPath, name: `${item.name}-443-TLS` }));
+      links.push(makeVlessLink({ server: item.domain, port: 80, tls: false, uuid, workerDomain, wsPath, name: `${item.name}-80-WS` }));
     }
-    return { address: input, port: null };
+  }
+
+  if (isOn(cfg.epi, true)) {
+    const pool = await loadIpPool(env, network);
+    for (const item of pool) {
+      const suffix = item.network ? `-${item.network}` : '';
+      links.push(makeVlessLink({ server: item.ip, port: 443, tls: true, uuid, workerDomain, wsPath, name: `${item.name}${suffix}-443-TLS` }));
+      links.push(makeVlessLink({ server: item.ip, port: 80, tls: false, uuid, workerDomain, wsPath, name: `${item.name}${suffix}-80-WS` }));
+    }
+  }
+
+  // 始终生成一个使用 Worker 域名的“原生入口”，用于验证 DNS/路由本身是否正常。
+  links.push(makeVlessLink({ server: workerDomain, port: 443, tls: true, uuid, workerDomain, wsPath, name: 'CF原生入口-443-TLS' }));
+  links.push(makeVlessLink({ server: workerDomain, port: 80, tls: false, uuid, workerDomain, wsPath, name: 'CF原生入口-80-WS' }));
+
+  if (!links.length) {
+    links.push(`vless://${uuid}@127.0.0.1:80?encryption=none&security=none&type=ws&host=error.com&path=%2F#CF-New-error`);
+  }
+
+  return { links, network, region, nodeCount: links.length, wsPath };
+}
+
+function buildSubscriptionResponse(links) {
+  const body = btoa(unescape(encodeURIComponent(links.join('\n'))));
+  return new Response(body, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store, no-cache, must-revalidate, max-age=0',
+      'Access-Control-Allow-Origin': '*',
+      'X-CFNew-Version': VERSION,
+      'X-CFNew-Node-Count': String(links.length)
+    }
+  });
+}
+
+function createUploadQueue(maxBytes = MAX_UPLOAD_QUEUE) {
+  let chunks = [];
+  let bytes = 0;
+  let draining = false;
+  let drainResolver = null;
+  const notify = () => { if (drainResolver) { const r = drainResolver; drainResolver = null; r(); } };
+  return {
+    get empty() { return chunks.length === 0; },
+    get bytes() { return bytes; },
+    clear() { chunks = []; bytes = 0; notify(); },
+    push(data) {
+      const chunk = toUint8Array(data);
+      if (!chunk.byteLength) return true;
+      if (bytes + chunk.byteLength > maxBytes) return false;
+      chunks.push(chunk.slice()); bytes += chunk.byteLength; return true;
+    },
+    async drain(getWriter) {
+      if (draining) return;
+      draining = true;
+      try {
+        while (chunks.length) {
+          const writer = getWriter();
+          if (!writer) break;
+          const chunk = chunks.shift();
+          bytes -= chunk.byteLength;
+          try {
+            await writer.write(chunk);
+          } catch {
+            chunks.unshift(chunk); bytes += chunk.byteLength;
+            break;
+          }
+        }
+      } finally {
+        draining = false;
+        notify();
+      }
+    },
+    async waitForDrain() {
+      if (!chunks.length) return;
+      await new Promise(resolve => { drainResolver = resolve; });
+    }
+  };
+}
+
+async function openSocket(host, port) {
+  const socket = connect({ hostname: host, port });
+  if (socket?.opened) await socket.opened;
+  return socket;
+}
+
+function closeSocket(socket) {
+  try { socket?.close(); } catch (_) {}
+}
+
+function closeWs(ws) {
+  try { if (ws?.readyState === 1 || ws?.readyState === 0) ws.close(); } catch (_) {}
+}
+
+async function pipeRemoteToWs(socket, ws, responseHeader, timeoutMs) {
+  let reader = null;
+  let firstByte = false;
+  let timedOut = false;
+  let done = false;
+  const timer = setTimeout(() => {
+    if (!firstByte && !done) {
+      timedOut = true;
+      closeSocket(socket);
+    }
+  }, timeoutMs);
+
+  try {
+    reader = socket.readable.getReader();
+    for (;;) {
+      const { value, done: readDone } = await reader.read();
+      if (readDone) break;
+      const chunk = toUint8Array(value);
+      if (!chunk.byteLength) continue;
+      firstByte = true;
+      if (ws.readyState !== 1) throw new Error('websocket closed');
+      const payload = responseHeader ? concatBytes(responseHeader, chunk) : chunk;
+      responseHeader = null;
+      ws.send(payload);
+    }
+  } catch (_) {
+    // 交由上层判断是否允许 fallback。
+  } finally {
+    done = true;
+    clearTimeout(timer);
+    try { reader?.releaseLock(); } catch (_) {}
+  }
+  return { firstByte, timedOut };
+}
+
+function parseVlessHeader(buffer, uuid) {
+  const data = toUint8Array(buffer);
+  if (data.byteLength < 17) return { needMore: true };
+  const expected = uuidToBytes(uuid);
+  if (!expected) return { error: 'invalid UUID configuration' };
+  if (!bytesEqual(data.subarray(1, 17), expected)) return { error: 'invalid user' };
+
+  const optLen = data[17];
+  const commandIndex = 18 + optLen;
+  if (data.byteLength < commandIndex + 4) return { needMore: true };
+  const command = data[commandIndex];
+  if (command !== 1 && command !== 2) return { error: 'command is not supported' };
+
+  const portIndex = commandIndex + 1;
+  const port = (data[portIndex] << 8) | data[portIndex + 1];
+  const addressIndex = portIndex + 2;
+  if (data.byteLength < addressIndex + 1) return { needMore: true };
+  const addressType = data[addressIndex];
+  let cursor = addressIndex + 1;
+  let hostname = '';
+
+  if (addressType === 1) {
+    if (data.byteLength < cursor + 4) return { needMore: true };
+    hostname = `${data[cursor]}.${data[cursor + 1]}.${data[cursor + 2]}.${data[cursor + 3]}`;
+    cursor += 4;
+  } else if (addressType === 2) {
+    if (data.byteLength < cursor + 1) return { needMore: true };
+    const length = data[cursor++];
+    if (data.byteLength < cursor + length) return { needMore: true };
+    hostname = new TextDecoder().decode(data.subarray(cursor, cursor + length));
+    cursor += length;
+  } else if (addressType === 3) {
+    if (data.byteLength < cursor + 16) return { needMore: true };
+    const view = new DataView(data.buffer, data.byteOffset + cursor, 16);
+    const parts = [];
+    for (let i = 0; i < 8; i++) parts.push(view.getUint16(i * 2).toString(16));
+    hostname = parts.join(':');
+    cursor += 16;
+  } else {
+    return { error: `invalid addressType: ${addressType}` };
+  }
+
+  if (!hostname) return { error: 'addressValue is empty' };
+  return {
+    version: data[0],
+    command,
+    isUDP: command === 2,
+    addressType,
+    hostname,
+    port,
+    rawIndex: cursor,
+    remaining: data.subarray(cursor)
+  };
+}
+
+function isAllowedWsPath(requestPath, basePath) {
+  return stripPath(requestPath) === stripPath(basePath || '/');
+}
+
+function getPathBase(cfg, uuid) {
+  return cfg.d || `/${uuid}`;
+}
+
+async function handleWebSocket(request, env, ctx, uuid, cfg) {
+  const url = new URL(request.url);
+  const basePath = getPathBase(cfg, uuid);
+  if (!isAllowedWsPath(url.pathname, basePath)) {
+    return new Response('WebSocket path not allowed', { status: 404 });
+  }
+
+  const pair = new WebSocketPair();
+  const [client, server] = Object.values(pair);
+  server.accept();
+  server.binaryType = 'arraybuffer';
+
+  const state = {
+    closed: false,
+    parsed: false,
+    firstBuffer: new Uint8Array(0),
+    remote: null,
+    writer: null,
+    initialPayload: null,
+    responseHeader: null,
+    retrying: false,
+    retryIndex: -1,
+    pipePromise: null,
+    uploadQueue: createUploadQueue()
+  };
+
+  const closeAll = () => {
+    if (state.closed) return;
+    state.closed = true;
+    state.uploadQueue.clear();
+    try { state.writer?.releaseLock(); } catch (_) {}
+    state.writer = null;
+    closeSocket(state.remote);
+    state.remote = null;
+    closeWs(server);
+  };
+
+  const queryP = url.searchParams.get('p') || '';
+  const queryRegion = text(url.searchParams.get('wk') || cfg.wk).trim().toUpperCase();
+  const queryRm = (url.searchParams.get('rm') || '').trim().toLowerCase() !== 'no';
+  const queryNetwork = text(url.searchParams.get('nt') || cfg.network || 'auto').trim().toLowerCase();
+  const actualRegion = queryRegion || detectRegion(request, cfg);
+  const actualNetwork = detectNetwork(request, cfg, queryNetwork);
+  const fallbacks = await loadFallbacks(env);
+  const candidates = orderFallbacks(fallbacks, actualRegion, queryRm, queryP);
+
+  function getWriter() { return state.writer; }
+
+  async function drainUpload() {
+    if (state.closed || !state.writer) return;
+    await state.uploadQueue.drain(getWriter);
+  }
+
+  async function setRemote(socket, writer) {
+    try { state.writer?.releaseLock(); } catch (_) {}
+    state.remote = socket;
+    state.writer = writer;
+    await drainUpload();
+  }
+
+  async function connectCandidate(host, port, resendInitial = true) {
+    const socket = await openSocket(host, port);
+    const writer = socket.writable.getWriter();
+    if (resendInitial && state.initialPayload?.byteLength) {
+      await writer.write(state.initialPayload);
+    }
+    await setRemote(socket, writer);
+    return socket;
+  }
+
+  async function attachPipe(socket, responseHeader, allowRetry) {
+    const result = await pipeRemoteToWs(socket, server, responseHeader, FIRST_BYTE_TIMEOUT_MS);
+    if (state.closed || state.remote !== socket) return;
+    if (!result.firstByte && allowRetry && !state.retrying) {
+      state.retrying = true;
+      closeSocket(socket);
+      try { state.writer?.releaseLock(); } catch (_) {}
+      state.writer = null;
+      state.remote = null;
+      await startFallbacks();
+    } else if (!result.firstByte) {
+      closeAll();
+    } else {
+      // 首字节已经到达，后续连接结束时正常关闭 WS，不再把已建立连接误判为 fallback。
+      closeAll();
+    }
+  }
+
+  async function tryAttach(host, port, allowRetry) {
+    try {
+      const socket = await connectCandidate(host, port, true);
+      state.pipePromise = attachPipe(socket, state.responseHeader, allowRetry).catch(() => closeAll());
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async function startFallbacks() {
+    if (state.closed) return;
+    for (let i = state.retryIndex + 1; i < candidates.length; i++) {
+      state.retryIndex = i;
+      const candidate = candidates[i];
+      const ok = await tryAttach(candidate.domain, candidate.port, i < candidates.length - 1);
+      if (ok) {
+        state.retrying = false;
+        return;
+      }
+    }
+    state.retrying = false;
+    closeAll();
+  }
+
+  async function establish(host, port, initialPayload, responseHeader) {
+    state.initialPayload = initialPayload;
+    state.responseHeader = responseHeader;
+    state.retryIndex = -1;
+    const directOk = await tryAttach(host, port, true);
+    if (!directOk) await startFallbacks();
+  }
+
+  const onMessage = event => {
+    // 串行化所有客户端 message，避免多个 async handler 同时写同一个 Stream writer。
+    messageChain = messageChain.then(async () => {
+      if (state.closed) return;
+      const chunk = toUint8Array(event.data);
+      if (!chunk.byteLength) return;
+
+      if (!state.parsed) {
+        state.firstBuffer = concatBytes(state.firstBuffer, chunk);
+        if (state.firstBuffer.byteLength > MAX_INITIAL_BUFFER) throw new Error('initial buffer too large');
+        const result = parseVlessHeader(state.firstBuffer, uuid);
+        if (result.needMore) return;
+        if (result.error) throw new Error(result.error);
+        if (result.isUDP) throw new Error('UDP is not supported by TCP sockets runtime; use TCP-based DNS/HTTP3 fallback off');
+        state.parsed = true;
+        const initialPayload = result.remaining;
+        state.firstBuffer = new Uint8Array(0);
+        const responseHeader = new Uint8Array([result.version, 0]);
+        await establish(result.hostname, result.port, initialPayload, responseHeader);
+        return;
+      }
+
+      if (!state.uploadQueue.push(chunk)) throw new Error('upload queue overflow');
+      await drainUpload();
+    }).catch(() => closeAll());
+  };
+
+  let messageChain = Promise.resolve();
+  server.addEventListener('message', onMessage);
+  server.addEventListener('close', closeAll);
+  server.addEventListener('error', closeAll);
+
+  // 发送 101 后，真正的连接工作由事件回调继续运行。
+  ctx?.waitUntil?.(messageChain.catch(() => {}));
+  return new Response(null, { status: 101, webSocket: client });
+}
+
+function base64Utf8(textValue) {
+  const bytes = new TextEncoder().encode(textValue);
+  let binary = '';
+  const step = 0x8000;
+  for (let i = 0; i < bytes.length; i += step) binary += String.fromCharCode(...bytes.subarray(i, i + step));
+  return btoa(binary);
+}
+
+function htmlEscape(value) {
+  return text(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function renderTerminalPage(cfg) {
+  const subtitle = cfg.d ? '已启用安全自定义路径保护<br>请输入您的访问 PATH 确认身份' : '请输入授权 UUID 验证';
+  const placeholder = cfg.d ? '输入安全 PATH 后回车...' : '输入 UUID 后回车...';
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>云端安全接入网关</title>
+<style>
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,rgba(15,23,42,.85),rgba(30,41,59,.85)),url('https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80') center/cover fixed no-repeat;display:flex;justify-content:center;align-items:center;min-height:100vh;color:#fff}.terminal{background:rgba(255,255,255,.12);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,.25);border-radius:20px;padding:40px;box-shadow:0 15px 35px rgba(0,0,0,.3);width:90%;max-width:520px;text-align:center}.terminal-header{font-size:2rem;font-weight:600;margin-bottom:12px;letter-spacing:1px}.terminal-subtitle{font-size:.95rem;opacity:.85;margin-bottom:25px;line-height:1.5}.terminal-input{background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.3);color:#fff;padding:14px 20px;border-radius:10px;width:100%;box-sizing:border-box;font-size:1.1rem;outline:none;transition:all .3s;text-align:center}.terminal-input:focus{border-color:#38bdf8;box-shadow:0 0 15px rgba(56,189,248,.3)}
+</style></head><body><div class="terminal"><div class="terminal-header">云端验证网关</div><div class="terminal-subtitle">${subtitle}</div><input type="text" class="terminal-input" id="authInput" placeholder="${placeholder}" autofocus></div>
+<script>document.getElementById('authInput').addEventListener('keypress',function(e){if(e.key==='Enter'){const v=this.value.trim().replace(/^\\/+/, '');if(v)location.href='/'+v;}});</script></body></html>`;
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
+}
+
+function renderStatus(data) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*' }
+  });
+}
+
+async function renderSubscriptionPage(request, env, uuid, cfg, pathBase) {
+  const origin = new URL(request.url).origin;
+  const baseUrl = `${origin}${pathBase}`;
+  const subUrl = `${baseUrl}/sub`;
+  const selectedRegion = cfg.wk || '';
+  const selectedNetwork = cfg.network || 'auto';
+  const kvReady = Boolean((await getKVBindings(env)).config);
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>节点管理中心 | Glass UI</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:linear-gradient(135deg,rgba(15,23,42,.88),rgba(30,41,59,.88)),url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1920&q=80') center/cover fixed no-repeat;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:30px 15px}.container{width:100%;max-width:900px}.header{text-align:center;margin-bottom:25px}.header h1{font-size:2.6rem;font-weight:700;text-shadow:0 4px 20px rgba(0,0,0,.5)}.header p{opacity:.85;margin-top:8px;font-size:1.05rem}.card{background:rgba(255,255,255,.12);backdrop-filter:blur(25px);-webkit-backdrop-filter:blur(25px);border:1px solid rgba(255,255,255,.22);border-radius:18px;padding:25px 30px;margin-bottom:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}.card h2{font-size:1.35rem;margin-bottom:18px;border-bottom:1px solid rgba(255,255,255,.2);padding-bottom:8px;font-weight:500}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px;margin-bottom:15px}.btn{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#fff;padding:12px;border-radius:10px;cursor:pointer;transition:all .25s;font-size:.95rem;font-weight:600;text-align:center}.btn:hover{background:rgba(56,189,248,.4);border-color:#38bdf8;transform:translateY(-2px);box-shadow:0 5px 15px rgba(56,189,248,.3)}.sub-box{margin-top:15px}.sub-box label{display:block;margin-bottom:6px;font-size:.9rem;opacity:.9}.input-group{display:flex;gap:10px}.input-group input{flex:1;background:rgba(0,0,0,.4);border:1px solid rgba(255,255,255,.3);color:#38bdf8;padding:10px 14px;border-radius:8px;font-size:.95rem;outline:none;font-family:monospace}.input-group button{background:#0284c7;border:none;color:#fff;padding:0 20px;border-radius:8px;cursor:pointer;font-weight:600;transition:.2s;white-space:nowrap}.input-group button:hover{background:#0369a1}.select-wrap{position:relative;margin-bottom:12px}.select-trigger{width:100%;display:flex;align-items:center;justify-content:space-between;background:rgba(0,0,0,.34);border:1px solid rgba(255,255,255,.3);color:#fff;padding:12px;border-radius:8px;font-size:1rem;cursor:pointer;text-align:left}.select-trigger:hover{background:rgba(255,255,255,.10);border-color:rgba(56,189,248,.65)}.select-menu{position:absolute;left:0;right:0;top:calc(100% + 8px);padding:7px;display:none;background:rgba(15,23,42,.62);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border:1px solid rgba(255,255,255,.24);border-radius:12px;box-shadow:0 16px 35px rgba(0,0,0,.35);z-index:50;max-height:300px;overflow:auto}.select-wrap.open .select-menu{display:block;animation:menuIn .18s ease}.select-option{display:flex;align-items:center;width:100%;padding:10px 11px;border-radius:9px;color:#fff;background:transparent;border:0;cursor:pointer;font-size:.95rem;text-align:left}.select-option:hover,.select-option.selected{background:rgba(56,189,248,.18);box-shadow:inset 0 0 0 1px rgba(56,189,248,.25)}.select-arrow{opacity:.8;transition:transform .18s}.select-wrap.open .select-arrow{transform:rotate(180deg)}.status{font-size:.86rem;opacity:.8;line-height:1.65}.pill{display:inline-block;padding:3px 8px;border-radius:999px;background:rgba(56,189,248,.15);border:1px solid rgba(56,189,248,.25);color:#bae6fd}.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%) translateY(20px);padding:11px 15px;border-radius:10px;background:rgba(15,23,42,.78);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.18);opacity:0;pointer-events:none;transition:.2s;z-index:100}.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}@keyframes menuIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}@media(max-width:640px){.card{padding:20px 16px}.header h1{font-size:2rem}.input-group{flex-direction:column}.input-group button{padding:12px}}
+</style></head><body><div class="container">
+<div class="header"><h1>节点管理中心</h1><p>三网高速优选已内置 • 80 / 443 全端口连通保障</p></div>
+<div class="card"><h2>客户端一键获取</h2><div class="grid"><button class="btn" onclick="applyClient('v2ray','V2RAY')">V2RAY</button><button class="btn" onclick="applyClient('clash','CLASH')">CLASH</button><button class="btn" onclick="applyClient('singbox','SING-BOX')">SING-BOX</button><button class="btn" onclick="applyClient('quanx','QUANTUMULT X')">QUANTUMULT X</button><button class="btn" onclick="applyClient('surge','SURGE')">SURGE</button><button class="btn" onclick="applyClient('v2ray','Shadowrocket')">Shadowrocket</button></div>
+<div class="sub-box"><label id="subTypeLabel">当前生成的订阅直链：</label><div class="input-group"><input type="text" id="subUrl" readonly><button onclick="copySubLink()">复制链接</button></div></div>
+<div class="status" id="subStatus">订阅服务：检查中…</div></div>
+<div class="card"><h2>落地地区覆盖 (自定义指定)</h2><div class="select-wrap" id="regionSelect"><button class="select-trigger" onclick="toggleSelect('regionSelect')"><span id="regionLabel">${htmlEscape(selectedRegion || '自动检测')}</span><span class="select-arrow">⌄</span></button><div class="select-menu">
+${[['','自动检测'],['US','🇺🇸 美国 (US)'],['SG','🇸🇬 新加坡 (SG)'],['HK','🇭🇰 香港 (HK)'],['TW','🇹🇼 台湾 (TW)'],['JP','🇯🇵 日本 (JP)'],['KR','🇰🇷 韩国 (KR)'],['DE','🇩🇪 德国 (DE)'],['SE','🇸🇪 瑞典 (SE)'],['NL','🇳🇱 荷兰 (NL)'],['FI','🇫🇮 芬兰 (FI)'],['GB','🇬🇧 英国 (GB)'],['FR','🇫🇷 法国 (FR)'],['AU','🇦🇺 澳大利亚 (AU)'],['CA','🇨🇦 加拿大 (CA)']].map(([v,l]) => `<button class="select-option ${v===selectedRegion?'selected':''}" onclick="chooseRegion('${v}','${l.replace(/'/g,"\\'")}',this)">${l}</button>`).join('')}
+</div></div>
+<div class="select-wrap" id="networkSelect"><button class="select-trigger" onclick="toggleSelect('networkSelect')"><span id="networkLabel">${htmlEscape(NETWORK_LABELS[selectedNetwork] || NETWORK_LABELS.auto)}</span><span class="select-arrow">⌄</span></button><div class="select-menu">
+${Object.entries(NETWORK_LABELS).map(([v,l]) => `<button class="select-option ${v===selectedNetwork?'selected':''}" onclick="chooseNetwork('${v}','${l}',this)">${l}</button>`).join('')}
+</div></div>
+<button class="btn" style="width:100%;padding:12px" onclick="savePolicy()">保存地区 / 三网策略</button><div class="status">KV 状态：<span class="pill">${kvReady ? '已绑定' : '未绑定'}</span>　当前版本：<span class="pill">${VERSION}</span></div></div>
+<div class="card"><h2>实用网络工具箱</h2><div class="grid"><button class="btn" onclick="window.open('https://cf.090227.xyz/','_blank')">优选域名提取</button><button class="btn" onclick="window.open('https://check.proxyip.cmliussss.net/','_blank')">ProxyIP检查</button><button class="btn" onclick="window.open('https://github.com/byJoey/cfnew','_blank')">项目仓库</button></div></div>
+</div><div class="toast" id="toast"></div>
+<script>
+const baseUrl=${JSON.stringify(baseUrl)};const nativeSubUrl=${JSON.stringify(subUrl)};const subConverter=${JSON.stringify(cfg.scu)};let currentRegion=${JSON.stringify(selectedRegion)};let currentNetwork=${JSON.stringify(selectedNetwork)};
+document.getElementById('subUrl').value=nativeSubUrl;
+function toggleSelect(id){document.querySelectorAll('.select-wrap').forEach(el=>{if(el.id!==id)el.classList.remove('open')});document.getElementById(id).classList.toggle('open')}
+document.addEventListener('click',e=>{if(!e.target.closest('.select-wrap'))document.querySelectorAll('.select-wrap').forEach(el=>el.classList.remove('open'))});
+function chooseRegion(v,label,el){currentRegion=v;document.getElementById('regionLabel').textContent=label;document.querySelectorAll('#regionSelect .select-option').forEach(x=>x.classList.remove('selected'));if(el)el.classList.add('selected');document.getElementById('regionSelect').classList.remove('open')}
+function chooseNetwork(v,label,el){currentNetwork=v;document.getElementById('networkLabel').textContent=label;document.querySelectorAll('#networkSelect .select-option').forEach(x=>x.classList.remove('selected'));if(el)el.classList.add('selected');document.getElementById('networkSelect').classList.remove('open')}
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200)}
+function applyClient(type,name){let finalUrl=nativeSubUrl+'?network='+encodeURIComponent(currentNetwork||'auto');if(type!=='v2ray')finalUrl=subConverter+'?target='+encodeURIComponent(type)+'&url='+encodeURIComponent(finalUrl)+'&insert=false&emoji=true&list=false&udp=true';document.getElementById('subTypeLabel').textContent='【'+name+'】专属订阅链接：';const input=document.getElementById('subUrl');input.value=finalUrl;copySubLink()}
+function copySubLink(){const input=document.getElementById('subUrl');input.select();input.setSelectionRange(0,99999);if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(input.value).then(()=>showToast('订阅链接已复制')).catch(()=>fallbackCopy())}else fallbackCopy()}
+function fallbackCopy(){try{document.execCommand('copy');showToast('订阅链接已复制')}catch(e){showToast('请手动复制链接')}}
+async function savePolicy(){try{const r=await fetch(baseUrl+'/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({wk:currentRegion,network:currentNetwork})});const j=await r.json();if(!r.ok)throw new Error(j.error||'保存失败');showToast('地区 / 三网策略已保存');refreshStatus()}catch(e){showToast('保存失败：'+e.message)}}
+async function refreshStatus(){try{const r=await fetch(baseUrl+'/api/status');const j=await r.json();document.getElementById('subStatus').innerHTML='订阅接口：<span class="pill">正常</span>　节点：<span class="pill">'+j.nodeCount+' 个</span>　网络：<span class="pill">'+(j.networkLabel||'三网通用')+'</span>'}catch(e){document.getElementById('subStatus').textContent='订阅接口：检查失败'}}
+refreshStatus();
+</script></body></html>`;
+  return new Response(html, { status: 200, headers: { 'Content-Type': 'text/html;charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
 export default {
-    async fetch(request, env, ctx) {
-        try {
-            await initKVStore(env);
-            at = (env.u || env.U || at).toLowerCase();
-            const subPath = (env.d || env.D || at).toLowerCase();
-            const ci = getConfigValue('p', env.p || env.P);
-            
-            const manualRegion = getConfigValue('wk', env.wk || env.WK);
-            if (manualRegion && manualRegion.trim()) {
-                manualWorkerRegion = manualRegion.trim().toUpperCase();
-                currentWorkerRegion = manualWorkerRegion;
-            } else if (ci && ci.trim()) {
-                currentWorkerRegion = 'CUSTOM';
-            } else {
-                currentWorkerRegion = await detectWorkerRegion(request);
-            }
-            
-            const envFallback = getConfigValue('p', env.p || env.P);
-            if (envFallback) {
-                const fallbackValue = envFallback.toLowerCase();
-                if (fallbackValue.includes(']:')) {
-                    const lastColonIndex = fallbackValue.lastIndexOf(':');
-                    fallbackPort = fallbackValue.slice(lastColonIndex + 1);
-                    fallbackAddress = fallbackValue.slice(0, lastColonIndex);
-                } else if (!fallbackValue.includes(']:') && !fallbackValue.includes(']')) {
-                    [fallbackAddress, fallbackPort = '443'] = fallbackValue.split(':');
-                } else {
-                    fallbackAddress = fallbackValue;
-                    fallbackPort = '443';
-                }
-            }
-
-            socks5Config = getConfigValue('s', env.s || env.S) || socks5Config;
-            if (socks5Config) {
-                try { parsedSocks5Config = parseSocksConfig(socks5Config); isSocksEnabled = true; } 
-                catch (err) { isSocksEnabled = false; }
-            }
-
-            scu = getConfigValue('scu', env.scu) || 'https://sublink.iwrt.pp.ua';
-            cp = getConfigValue('d', env.d || env.D) || '';
-
-            const url = new URL(request.url);
-
-            if (request.headers.get('Upgrade') === atob('d2Vic29ja2V0')) {
-                return await handleWsRequest(request);
-            }
-            
-            if (request.method === 'GET') {
-                // 1. 首页直接访问根路径
-                if (url.pathname === '/') {
-                    return renderTerminalPage(cp);
-                }
-                
-                // 2. 自定义路径模式处理 (支持带或不带开头的斜杠)
-                if (cp && cp.trim()) {
-                    const cleanCustom = cp.trim().replace(/^\/+|\/+$/g, '');
-                    const currentCleanPath = url.pathname.replace(/^\/+|\/+$/g, '');
-                    
-                    // 访问管理面板：/cfnew-net 或 /cfnew-net/
-                    if (currentCleanPath === cleanCustom) {
-                        return await handleSubscriptionPage(request, at);
-                    }
-                    
-                    // 访问原生节点订阅：/cfnew-net/sub
-                    if (currentCleanPath === cleanCustom + '/sub') {
-                        return await handleSubscriptionRequest(request, at, url);
-                    }
-                } else {
-                    // 3. 兼容标准 UUID 路径模式
-                    const cleanPath = url.pathname.replace(/^\/+|\/+$/g, '');
-                    if (cleanPath === at) {
-                        return await handleSubscriptionPage(request, at);
-                    }
-                    if (cleanPath === at + '/sub') {
-                        return await handleSubscriptionRequest(request, at, url);
-                    }
-                }
-            }
-            return new Response(JSON.stringify({ error: 'Not Found', path: url.pathname }), { status: 404, headers: { 'Content-Type': 'application/json' }});
-        } catch (err) {
-            return new Response(err.toString(), { status: 500 });
-        }
-    },
-};
-
-// [修复点 5] 高可用背景终端首页：采用 2026 最新 Unsplash 动态科技风高清壁纸
-function renderTerminalPage(cp) {
-    const terminalHtml = `<!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>云端安全接入网关</title>
-        <style>
-            body { 
-                margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-                background: linear-gradient(135deg, rgba(15,23,42,0.85), rgba(30,41,59,0.85)), 
-                            url('https://images.unsplash.com/photo-1518709268805-4e9042af9f23?auto=format&fit=crop&w=1920&q=80') center/cover fixed no-repeat;
-                display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #fff; 
-            }
-            .terminal { 
-                background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); 
-                border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 20px; padding: 40px; 
-                box-shadow: 0 15px 35px rgba(0,0,0,0.3); width: 90%; max-width: 520px; text-align: center; 
-            }
-            .terminal-header { font-size: 2rem; font-weight: 600; margin-bottom: 12px; letter-spacing: 1px; }
-            .terminal-subtitle { font-size: 0.95rem; opacity: 0.85; margin-bottom: 25px; line-height: 1.5; }
-            .terminal-input { 
-                background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.3); color: #fff; 
-                padding: 14px 20px; border-radius: 10px; width: 100%; box-sizing: border-box; font-size: 1.1rem; 
-                outline: none; transition: all 0.3s; text-align: center; 
-            }
-            .terminal-input:focus { border-color: #38bdf8; box-shadow: 0 0 15px rgba(56,189,248,0.3); }
-        </style>
-    </head>
-    <body>
-        <div class="terminal">
-            <div class="terminal-header">云端验证网关</div>
-            <div class="terminal-subtitle">${cp ? '已启用安全自定义路径保护<br>请输入您的访问 PATH 确认身份' : '请输入授权 UUID 验证'}</div>
-            <input type="text" class="terminal-input" id="authInput" placeholder="${cp ? '输入安全 PATH 后回车...' : '输入 UUID 后回车...'}" autofocus>
-        </div>
-        <script>
-            document.getElementById('authInput').addEventListener('keypress', function(e) {
-                if (e.key === 'Enter') {
-                    const val = this.value.trim().replace(/^\\/+/, '');
-                    if (val) window.location.href = '/' + val;
-                }
-            });
-        </script>
-    </body>
-    </html>`;
-    return new Response(terminalHtml, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-}
-
-// [修复点 6] 节点链路生成器：为每个目标（包括 4 大优选和三网节点）生成 443 TLS 和 80 节点
-async function handleSubscriptionRequest(request, user, url = null) {
-    if (!url) url = new URL(request.url);
-    const finalLinks = [];
-    const workerDomain = url.hostname;
-
-    // 1. 挂载 4 个实测高速反代域名 (visa, icook, visa.sg, cf.090227)
-    directDomains.forEach(item => {
-        finalLinks.push(...generateDualPortNodes(item.domain, item.name, user, workerDomain));
-    });
-
-    // 2. 挂载三网高速优选 Anycast 节点 (电信 / 联通 / 移动)
-    triNetIPs.forEach(item => {
-        finalLinks.push(...generateDualPortNodes(item.ip, item.isp, user, workerDomain));
-    });
-
-    // 3. 挂载原生节点
-    finalLinks.push(...generateDualPortNodes(workerDomain, 'CF原生节点', user, workerDomain));
-
-    const subscriptionContent = btoa(finalLinks.join('\n'));
-    return new Response(subscriptionContent, { 
-        headers: { 
-            'Content-Type': 'text/plain; charset=utf-8', 
-            'Cache-Control': 'no-store, no-cache, must-revalidate',
-            'Access-Control-Allow-Origin': '*'
-        }
-    });
-}
-
-// 辅助函数：同时生成 443-TLS 与 80-非TLS 节点
-function generateDualPortNodes(address, name, user, workerDomain) {
-    const links = [];
-    const proto = atob('dmxlc3M='); // vless
-    const wsPath = '/?ed=2048';
-    const cleanAddr = address.includes(':') ? `[${address}]` : address;
-
-    // 443 端口 (TLS)
-    const tlsParams = new URLSearchParams({
-        encryption: 'none',
-        security: 'tls',
-        sni: workerDomain,
-        fp: 'chrome',
-        type: 'ws',
-        host: workerDomain,
-        path: wsPath
-    });
-    links.push(`${proto}://${user}@${cleanAddr}:443?${tlsParams.toString()}#${encodeURIComponent(name + '-443-TLS')}`);
-
-    // 80 端口 (Non-TLS)
-    const nonTlsParams = new URLSearchParams({
-        encryption: 'none',
-        security: 'none',
-        type: 'ws',
-        host: workerDomain,
-        path: wsPath
-    });
-    links.push(`${proto}://${user}@${cleanAddr}:80?${nonTlsParams.toString()}#${encodeURIComponent(name + '-80-WS')}`);
-
-    return links;
-}
-
-// [修复点 7] 核心 WebSocket 转发与备用节点回落（彻底解决 -1 ms 连接无响应）
-async function handleWsRequest(request) {
-    const wsPair = new WebSocketPair();
-    const [clientSock, serverSock] = Object.values(wsPair);
-    serverSock.accept();
-    let remoteConnWrapper = { socket: null };
-
-    const readable = new ReadableStream({
-        start(controller) {
-            serverSock.addEventListener('message', (event) => controller.enqueue(event.data));
-            serverSock.addEventListener('close', () => controller.close());
-            serverSock.addEventListener('error', (err) => controller.error(err));
-        }
-    });
-
-    readable.pipeTo(new WritableStream({
-        async write(chunk) {
-            if (remoteConnWrapper.socket) {
-                const writer = remoteConnWrapper.socket.writable.getWriter();
-                await writer.write(chunk); 
-                writer.releaseLock(); 
-                return;
-            }
-            if (chunk.byteLength >= 24) {
-                const vlessResult = parseWsPacketHeader(chunk, at);
-                if (!vlessResult.hasError) {
-                    await forwardTCP(vlessResult.addressType, vlessResult.hostname, vlessResult.port, chunk.slice(vlessResult.rawIndex), serverSock, new Uint8Array([vlessResult.version[0], 0]), remoteConnWrapper);
-                }
-            }
-        },
-    })).catch(() => {});
-    return new Response(null, { status: 101, webSocket: clientSock });
-}
-
-// [修复点 8] 支持直连与 ProxyIP 智能回退，确保节点连通
-async function forwardTCP(addrType, host, portNum, rawData, ws, respHeader, remoteConnWrapper) {
-    async function connectAndSend(address, port) {
-        const remoteSock = connect({ hostname: address, port: port });
-        const writer = remoteSock.writable.getWriter();
-        await writer.write(rawData); 
-        writer.releaseLock();
-        return remoteSock;
-    }
-
-    async function retryFallback() {
-        try {
-            // 直连失败时使用动态优选备用出口
-            const bestBackup = await getBestBackupIP(currentWorkerRegion);
-            const fallbackHost = fallbackAddress || (bestBackup ? bestBackup.domain : 'ProxyIP.SG.CMLiussss.net');
-            const fallbackPortNum = parseInt(fallbackPort, 10) || 443;
-            const fbSocket = await connectAndSend(fallbackHost, fallbackPortNum);
-            remoteConnWrapper.socket = fbSocket;
-            pipeRemoteToWs(fbSocket, ws, respHeader);
-        } catch (e) {
-            try { ws.close(); } catch (_) {}
-        }
-    }
-
+  async fetch(request, env, ctx) {
     try {
-        const initialSocket = await connectAndSend(host, portNum);
-        remoteConnWrapper.socket = initialSocket;
-        pipeRemoteToWs(initialSocket, ws, respHeader, retryFallback);
-    } catch (err) {
-        await retryFallback();
+      const url = new URL(request.url);
+      const { config: cfg } = await loadConfig(env);
+      const uuid = text(env?.u || env?.U || DEFAULT_UUID).toLowerCase();
+      if (!isValidUuid(uuid)) return new Response(JSON.stringify({ error: 'Invalid UUID configuration' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+      const basePath = getPathBase(cfg, uuid);
+      const pathname = stripPath(url.pathname);
+
+      // WebSocket 必须先经过路径校验，修复原版“任何 WS 路径都直接进代理”的 path mapping 问题。
+      if (request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+        return await handleWebSocket(request, env, ctx, uuid, cfg);
+      }
+
+      if (request.method === 'OPTIONS') {
+        return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET,POST,OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type,Authorization' } });
+      }
+
+      if (request.method === 'GET' && pathname === '/') return renderTerminalPage(cfg);
+
+      if (request.method === 'GET' && pathname === basePath) {
+        return await renderSubscriptionPage(request, env, uuid, cfg, basePath);
+      }
+
+      if (request.method === 'GET' && pathname === `${basePath}/sub`) {
+        const result = await generateSubscription(request, env, uuid, url, cfg);
+        return buildSubscriptionResponse(result.links);
+      }
+
+      if (pathname === `${basePath}/api/status`) {
+        const result = await generateSubscription(request, env, uuid, url, cfg);
+        const net = detectNetwork(request, cfg, url.searchParams.get('network') || url.searchParams.get('nt') || cfg.network);
+        return renderStatus({ ok: true, version: VERSION, path: basePath, nodeCount: result.nodeCount, region: result.region, network: net, networkLabel: NETWORK_LABELS[net] || NETWORK_LABELS.all, websocketPath: result.wsPath, kv: Boolean((await getKVBindings(env)).config) });
+      }
+
+      if (pathname === `${basePath}/api/config` && request.method === 'GET') {
+        const { config } = await loadConfig(env);
+        return renderStatus({ wk: config.wk, network: config.network, d: config.d, scu: config.scu });
+      }
+
+      if (pathname === `${basePath}/api/config` && request.method === 'POST') {
+        let body = null;
+        try { body = await request.json(); } catch { body = {}; }
+        const saved = await saveUiConfig(env, body || {});
+        return renderStatus({ ok: true, config: saved });
+      }
+
+      if (pathname === '/healthz') return new Response('ok', { status: 200, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' } });
+
+      return new Response(JSON.stringify({ error: 'Not Found', path: url.pathname }), { status: 404, headers: { 'Content-Type': 'application/json;charset=utf-8' } });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: text(error?.message || error, 'Internal Error'), version: VERSION }), { status: 500, headers: { 'Content-Type': 'application/json;charset=utf-8', 'Cache-Control': 'no-store' } });
     }
-}
-
-function pipeRemoteToWs(remoteSocket, ws, respHeader, onRetry) {
-    let header = respHeader;
-    let hasData = false;
-    remoteSocket.readable.pipeTo(new WritableStream({
-        async write(chunk) {
-            hasData = true;
-            if (ws.readyState === 1) {
-                if (header) { 
-                    ws.send(await new Blob([header, chunk]).arrayBuffer()); 
-                    header = null; 
-                } else { 
-                    ws.send(chunk); 
-                }
-            }
-        }
-    })).catch(() => { try { ws.close(); } catch (_) {} });
-    if (!hasData && onRetry) onRetry();
-}
-
-function parseWsPacketHeader(chunk, token) {
-    if (chunk.byteLength < 24) return { hasError: true };
-    const version = new Uint8Array(chunk.slice(0, 1));
-    const hexTable = Array.from({ length: 256 }, (v, i) => (i + 256).toString(16).slice(1));
-    const arr = new Uint8Array(chunk.slice(1, 17));
-    const id = (hexTable[arr[0]]+hexTable[arr[1]]+hexTable[arr[2]]+hexTable[arr[3]]+"-"+hexTable[arr[4]]+hexTable[arr[5]]+"-"+hexTable[arr[6]]+hexTable[arr[7]]+"-"+hexTable[arr[8]]+hexTable[arr[9]]+"-"+hexTable[arr[10]]+hexTable[arr[11]]+hexTable[arr[12]]+hexTable[arr[13]]+hexTable[arr[14]]+hexTable[arr[15]]).toLowerCase();
-    if (id !== token) return { hasError: true };
-    
-    const optLen = new Uint8Array(chunk.slice(17, 18))[0];
-    const portIdx = 19 + optLen;
-    const port = new DataView(chunk.slice(portIdx, portIdx + 2)).getUint16(0);
-    let addrIdx = portIdx + 2, addrLen = 0, addrValIdx = addrIdx + 1, hostname = '';
-    const addressType = new Uint8Array(chunk.slice(addrIdx, addrValIdx))[0];
-    switch (addressType) {
-        case 1: addrLen = 4; hostname = new Uint8Array(chunk.slice(addrValIdx, addrValIdx + addrLen)).join('.'); break;
-        case 2: addrLen = new Uint8Array(chunk.slice(addrValIdx, addrValIdx + 1))[0]; addrValIdx += 1; hostname = new TextDecoder().decode(chunk.slice(addrValIdx, addrValIdx + addrLen)); break;
-        case 3: addrLen = 16; const ipv6 = []; const ipv6View = new DataView(chunk.slice(addrValIdx, addrValIdx + addrLen)); for (let i = 0; i < 8; i++) ipv6.push(ipv6View.getUint16(i * 2).toString(16)); hostname = ipv6.join(':'); break;
-    }
-    return { hasError: false, addressType, port, hostname, rawIndex: addrValIdx + addrLen, version };
-}
-
-// [修复点 9] 全新毛玻璃控制面板：包含完整地区（德国/瑞典/荷兰/芬兰/英国等）以及直观的订阅框
-async function handleSubscriptionPage(request, user = null) {
-    const pageHtml = `<!DOCTYPE html>
-    <html lang="zh-CN">
-    <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>节点管理中心 | Glass UI</title>
-        <style>
-            * { margin: 0; padding: 0; box-sizing: border-box; }
-            body { 
-                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-                background: linear-gradient(135deg, rgba(15,23,42,0.88), rgba(30,41,59,0.88)), 
-                            url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1920&q=80') center/cover fixed no-repeat;
-                color: #fff; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 30px 15px;
-            }
-            .container { width: 100%; max-width: 900px; }
-            .header { text-align: center; margin-bottom: 25px; }
-            .header h1 { font-size: 2.6rem; font-weight: 700; text-shadow: 0 4px 20px rgba(0,0,0,0.5); }
-            .header p { opacity: 0.85; margin-top: 8px; font-size: 1.05rem; }
-            .card { 
-                background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); 
-                border: 1px solid rgba(255, 255, 255, 0.22); border-radius: 18px; padding: 25px 30px; margin-bottom: 20px; 
-                box-shadow: 0 10px 30px rgba(0,0,0,0.25); 
-            }
-            .card h2 { font-size: 1.35rem; margin-bottom: 18px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 8px; font-weight: 500; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 15px; }
-            .btn { 
-                background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.3); color: #fff; 
-                padding: 12px; border-radius: 10px; cursor: pointer; transition: all 0.25s; font-size: 0.95rem; font-weight: 600; text-align: center; 
-            }
-            .btn:hover { background: rgba(56, 189, 248, 0.4); border-color: #38bdf8; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(56,189,248,0.3); }
-            .sub-box { margin-top: 15px; }
-            .sub-box label { display: block; margin-bottom: 6px; font-size: 0.9rem; opacity: 0.9; }
-            .input-group { display: flex; gap: 10px; }
-            .input-group input { 
-                flex: 1; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.3); color: #38bdf8; 
-                padding: 10px 14px; border-radius: 8px; font-size: 0.95rem; outline: none; font-family: monospace; 
-            }
-            .input-group button { 
-                background: #0284c7; border: none; color: #fff; padding: 0 20px; border-radius: 8px; cursor: pointer; font-weight: 600; 
-                transition: 0.2s; white-space: nowrap; 
-            }
-            .input-group button:hover { background: #0369a1; }
-            select { 
-                width: 100%; background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.3); color: #fff; 
-                padding: 12px; border-radius: 8px; font-size: 1rem; outline: none; 
-            }
-            select option { background: #1e293b; color: #fff; }
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <div class="header">
-                <h1>节点管理中心</h1>
-                <p>三网高速优选已内置 • 80 / 443 全端口连通保障</p>
-            </div>
-
-            <!-- 客户端订阅生成区域 -->
-            <div class="card">
-                <h2>客户端一键获取</h2>
-                <div class="grid">
-                    <button class="btn" onclick="applyClient('v2ray', 'V2RAY')">V2RAY</button>
-                    <button class="btn" onclick="applyClient('clash', 'CLASH')">CLASH</button>
-                    <button class="btn" onclick="applyClient('singbox', 'SING-BOX')">SING-BOX</button>
-                    <button class="btn" onclick="applyClient('quanx', 'QUANTUMULT X')">QUANTUMULT X</button>
-                    <button class="btn" onclick="applyClient('surge', 'SURGE')">SURGE</button>
-                    <button class="btn" onclick="applyClient('v2ray', 'Shadowrocket')">Shadowrocket</button>
-                </div>
-                
-                <div class="sub-box">
-                    <label id="subTypeLabel">当前生成的订阅直链：</label>
-                    <div class="input-group">
-                        <input type="text" id="subUrl" readonly>
-                        <button onclick="copySubLink()">复制链接</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 核心代理设置 -->
-            <div class="card">
-                <h2>落地地区覆盖 (自定义指定)</h2>
-                <div style="margin-bottom: 15px;">
-                    <select id="wkRegion">
-                        <option value="">自动检测</option>
-                        <option value="US">🇺🇸 美国 (US)</option>
-                        <option value="SG">🇸🇬 新加坡 (SG)</option>
-                        <option value="HK">🇭🇰 香港 (HK)</option>
-                        <option value="TW">🇹🇼 台湾 (TW)</option>
-                        <option value="JP">🇯🇵 日本 (JP)</option>
-                        <option value="KR">🇰🇷 韩国 (KR)</option>
-                        <option value="DE">🇩🇪 德国 (DE)</option>
-                        <option value="SE">🇸🇪 瑞典 (SE)</option>
-                        <option value="NL">🇳🇱 荷兰 (NL)</option>
-                        <option value="FI">🇫🇮 芬兰 (FI)</option>
-                        <option value="GB">🇬🇧 英国 (GB)</option>
-                        <option value="AU">🇦🇺 澳大利亚 (AU)</option>
-                    </select>
-                </div>
-                <button class="btn" style="width: 100%; padding: 12px;" onclick="alert('地区保存成功！已启用智能就近转发。')">保存地区策略</button>
-            </div>
-
-            <!-- 配套工具箱 -->
-            <div class="card">
-                <h2>实用网络工具箱</h2>
-                <div class="grid">
-                    <button class="btn" onclick="window.open('https://cf.090227.xyz/','_blank')">优选域名提取</button>
-                    <button class="btn" onclick="window.open('https://check.proxyip.cmliussss.net/','_blank')">ProxyIP检查</button>
-                    <button class="btn" onclick="window.open('https://github.com/byJoey/cfnew','_blank')">项目仓库</button>
-                </div>
-            </div>
-        </div>
-
-        <script>
-            // 剔除任何结尾的斜杠和哈希参数，保证生成的 /sub 是干净的 HTTP 接口
-            var baseUrl = window.location.origin + window.location.pathname.replace(/\\/+$/, "").replace(/\\/sub$/, "");
-            var nativeSubUrl = baseUrl + "/sub";
-            var subConverter = "${scu}";
-
-            // 初始化文本框显示
-            document.getElementById("subUrl").value = nativeSubUrl;
-
-            function applyClient(clientType, clientName) {
-                var finalUrl = nativeSubUrl;
-                if (clientType !== 'v2ray') {
-                    finalUrl = subConverter + "?target=" + clientType + "&url=" + encodeURIComponent(nativeSubUrl) + "&insert=false&emoji=true&list=false&udp=true";
-                }
-                document.getElementById("subTypeLabel").textContent = "【" + clientName + "】专属订阅链接：";
-                var input = document.getElementById("subUrl");
-                input.value = finalUrl;
-                copySubLink();
-            }
-
-            function copySubLink() {
-                var input = document.getElementById("subUrl");
-                input.select();
-                input.setSelectionRange(0, 99999);
-                
-                if (navigator.clipboard && window.isSecureContext) {
-                    navigator.clipboard.writeText(input.value).then(function() {
-                        alert("✅ 订阅链接已成功复制到剪贴板！");
-                    }).catch(function() {
-                        fallbackCopy();
-                    });
-                } else {
-                    fallbackCopy();
-                }
-            }
-
-            function fallbackCopy() {
-                try {
-                    document.execCommand('copy');
-                    alert("✅ 订阅链接已成功复制到剪贴板！");
-                } catch(e) {
-                    alert("剪贴板权限受限，请长按输入框手动复制。");
-                }
-            }
-        </script>
-    </body>
-    </html>`;
-    return new Response(pageHtml, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
-}
+  }
+};

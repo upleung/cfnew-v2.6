@@ -1,0 +1,14 @@
+{
+  "comment": "Optional KV seed data. The Worker works without this file.",
+  "items": [
+    {"ip":"104.16.160.1","port":443,"name":"电信优选-104","region":"US","network":"telecom"},
+    {"ip":"162.159.138.1","port":443,"name":"电信优选-162","region":"US","network":"telecom"},
+    {"ip":"172.64.32.1","port":443,"name":"电信优选-172","region":"US","network":"telecom"},
+    {"ip":"104.17.0.1","port":443,"name":"联通优选-104","region":"US","network":"unicom"},
+    {"ip":"104.20.0.1","port":443,"name":"联通优选-104B","region":"US","network":"unicom"},
+    {"ip":"172.67.0.1","port":443,"name":"联通优选-172","region":"US","network":"unicom"},
+    {"ip":"104.19.160.1","port":443,"name":"移动优选-104","region":"US","network":"mobile"},
+    {"ip":"162.159.192.1","port":443,"name":"移动优选-162","region":"US","network":"mobile"},
+    {"ip":"172.65.0.1","port":443,"name":"移动优选-172","region":"US","network":"mobile"}
+  ]
+}

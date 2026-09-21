@@ -1,65 +1,66 @@
-name: Deploy Worker Script
+name: Validate CF-New Worker
 
 on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '明文源吗'
+      - 'scripts/**'
+      - 'worker/**'
+      - 'wrangler.toml'
+      - 'package.json'
+      - '.github/workflows/**'
   push:
     branches:
       - main
       - master
-    tags:
-      - 'v*'
+    paths:
+      - '明文源吗'
+      - 'scripts/**'
+      - 'worker/**'
+      - 'wrangler.toml'
+      - 'package.json'
+      - '.github/workflows/**'
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: cfnew-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '24'
+  OBFUSCATOR_VERSION: '5.7.0'
 
 jobs:
-  deploy-worker:
+  validate:
+    name: Syntax + Obfuscation + Package Validation
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v7
         with:
-          fetch-depth: 0
-      
-      - name: Generate Dynamic Tag Name
-        id: get_tag
+          node-version: ${{ env.NODE_VERSION }}
+          package-manager-cache: false
+
+      - name: Install exact obfuscator version
+        run: npm install --no-save --no-package-lock --ignore-scripts "javascript-obfuscator@${OBFUSCATOR_VERSION}"
+
+      - name: Run validation
+        run: node scripts/validate.mjs
+
+      - name: Test Pages.zip
+        shell: bash
         run: |
-          # 智能标签生成逻辑：如果是 Tag 触发则使用原 Tag，如果是 push 触发则生成时间戳 Tag
-          if [[ $GITHUB_REF == refs/tags/* ]]; then
-            TAG_NAME=${GITHUB_REF#refs/tags/}
-          else
-            TAG_NAME=v2.6-$(date +'%Y%m%d%H%M%S')
-          fi
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "当前使用的标签名称: $TAG_NAME"
-      
-      - name: Check if source file exists
-        run: |
-          if [ ! -f "少年你相信光吗" ]; then
-            echo "错误：在项目根目录未找到 '少年你相信光吗' 文件。"
-            exit 1
-          fi
-          echo "成功找到加密源文件 '少年你相信光吗'"
-      
-      - name: Rename file and Zip
-        run: |
-          cp "少年你相信光吗" "_worker.js"
-          zip Pages.zip _worker.js
-          echo "成功将 '_worker.js' 压缩为 'Pages.zip'"
-      
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          tag_name: ${{ steps.get_tag.outputs.tag_name }}
-          name: CFnew-Release ${{ steps.get_tag.outputs.tag_name }}
-          body: |
-            ## 🚀 自动部署发布 (Auto Deploy)
-            
-            - **打包产物**: `Pages.zip` (内部包含混淆加密后的 `_worker.js`)
-            - **自动标签**: ${{ steps.get_tag.outputs.tag_name }}
-            - **核心更新**: 专属订阅转换源 (`sublink.iwrt.pp.ua`) 与防查杀混淆更新。
-          draft: false
-          prerelease: false
-          files: Pages.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          set -euo pipefail
+          rm -f Pages.zip
+          (cd dist && zip -9 ../Pages.zip _worker.js)
+          unzip -t Pages.zip
+          unzip -p Pages.zip _worker.js > /tmp/pages-worker.js
+          cmp --silent /tmp/pages-worker.js dist/_worker.js
+          echo 'Pages.zip validation: PASS'

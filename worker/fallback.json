@@ -1,0 +1,13 @@
+[
+  {"domain":"ProxyIP.CMLiussss.net","regionCode":"","port":443},
+  {"domain":"ProxyIP.HK.CMLiussss.net","regionCode":"HK","port":443},
+  {"domain":"ProxyIP.US.CMLiussss.net","regionCode":"US","port":443},
+  {"domain":"ProxyIP.SG.CMLiussss.net","regionCode":"SG","port":443},
+  {"domain":"ProxyIP.JP.CMLiussss.net","regionCode":"JP","port":443},
+  {"domain":"ProxyIP.DE.CMLiussss.net","regionCode":"DE","port":443},
+  {"domain":"ProxyIP.SE.CMLiussss.net","regionCode":"SE","port":443},
+  {"domain":"ProxyIP.NL.CMLiussss.net","regionCode":"NL","port":443},
+  {"domain":"ProxyIP.FI.CMLiussss.net","regionCode":"FI","port":443},
+  {"domain":"ProxyIP.GB.CMLiussss.net","regionCode":"GB","port":443},
+  {"domain":"ProxyIP.CA.CMLiussss.net","regionCode":"CA","port":443}
+]

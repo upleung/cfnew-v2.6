@@ -1,0 +1,6 @@
+name = "cf-new-v2-7-fixed"
+compatibility_date = "2026-01-20"
+
+# Pages Advanced Mode uses _worker.js. KV bindings are configured in the
+# Cloudflare Pages dashboard; the binding names expected by the worker are:
+# CFNEW_CONFIG, CFNEW_IP_POOL, CFNEW_FALLBACK, CFNEW_NETWORK_TYPE
